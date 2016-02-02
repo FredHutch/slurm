@@ -45,7 +45,9 @@ typedef struct env_options {
 	cpu_bind_type_t
 		cpu_bind_type;	/* --cpu_bind=			*/
 	char *cpu_bind;		/* binding map for map/mask_cpu	*/
-	uint32_t cpu_freq;	/* cpu_frequency requested	*/
+	uint32_t cpu_freq_min;  /* Minimum cpu frequency  */
+	uint32_t cpu_freq_max;  /* Maximum cpu frequency  */
+	uint32_t cpu_freq_gov;  /* cpu frequency governor */
 	mem_bind_type_t
 		mem_bind_type;	/* --mem_bind=			*/
 	char *mem_bind;		/* binding map for tasks to memory	*/
@@ -60,6 +62,7 @@ typedef struct env_options {
 	uint16_t comm_port;	/* srun's communication port */
 	slurm_addr_t *cli;	/* launch node address */
 	slurm_addr_t *self;
+	char *job_name;		/* assigned job name */
 	int jobid;		/* assigned job id */
 	int stepid;	        /* assigned step id */
 	int procid;		/* global task id (across nodes) */
@@ -73,13 +76,16 @@ typedef struct env_options {
 	pid_t task_pid;
 	char *sgtids;		/* global ranks array of integers */
 	uint16_t pty_port;	/* used to communicate window size changes */
-	uint8_t ws_col;		/* window size, columns */
-	uint8_t ws_row;		/* window size, row count */
+	uint16_t ws_col;	/* window size, columns */
+	uint16_t ws_row;	/* window size, row count */
 	char *ckpt_dir;		/* --ckpt-dir=                 */
 	uint16_t restart_cnt;	/* count of job restarts	*/
 	uint16_t batch_flag;	/* 1 if batch: queued job with script */
 	uint32_t uid;		/* user ID */
 	char *user_name;	/* user name */
+	char *account;          /* job's account */
+	char *qos;              /* job's qos */
+	char *resv_name;        /* job's reservation */
 } env_t;
 
 
@@ -203,6 +209,13 @@ void env_array_merge(char ***dest_array, const char **src_array);
  * overwritten with the value from src_array.
  */
 void env_array_merge_slurm(char ***dest_array, const char **src_array);
+
+/*
+ * Merge all of the environment variables in src_array into the array
+ * dest_array and strip any header names of "SPANK_".  Any variables already
+ * found in dest_array will be overwritten with the value from src_array.
+ */
+void env_array_merge_spank(char ***dest_array, const char **src_array);
 
 /*
  * Copy env_array must be freed by env_array_free

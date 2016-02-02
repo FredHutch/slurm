@@ -85,7 +85,10 @@ int parse_select_type_param(char *select_type_parameters, uint16_t *param)
 			*param |= CR_OTHER_CONS_RES;
 		} else if (!strcasecmp(str_parameters,
 				       "CR_ALLOCATE_FULL_SOCKET")) {
-			*param |= CR_ALLOCATE_FULL_SOCKET;
+			verbose("CR_ALLOCATE_FULL_SOCKET is deprecated.  "
+				"It is now the default for CR_SOCKET*.  "
+				"It is safe to remove it "
+				"from your slurm.conf");
 		} else if (!strcasecmp(str_parameters,
 				       "CR_ONE_TASK_PER_CORE")) {
 			*param |= CR_ONE_TASK_PER_CORE;
@@ -94,11 +97,10 @@ int parse_select_type_param(char *select_type_parameters, uint16_t *param)
 			*param |= CR_CORE_DEFAULT_DIST_BLOCK;
 		} else if (!strcasecmp(str_parameters, "CR_LLN")) {
 			*param |= CR_LLN;
-		} else if (!strcasecmp(str_parameters, "NHC_No")) {
-			*param |= CR_NHC_STEP_NO;
-			*param |= CR_NHC_NO;
-		} else if (!strcasecmp(str_parameters, "NHC_No_Steps")) {
-			*param |= CR_NHC_STEP_NO;
+		} else if (!strcasecmp(str_parameters, "NHC")) {
+			*param |= CR_NHC;
+		} else if (!strcasecmp(str_parameters, "NHC_STEP")) {
+			*param |= CR_NHC_STEP;
 		} else if (!strcasecmp(str_parameters, "CR_PACK_NODES")) {
 			*param |= CR_PACK_NODES;
 		} else {
@@ -121,7 +123,7 @@ int parse_select_type_param(char *select_type_parameters, uint16_t *param)
  * NOTE: Not reentrant */
 extern char *select_type_param_string(uint16_t select_type_param)
 {
-	static char select_str[128];
+	static char select_str[1024];
 
 	select_str[0] = '\0';
 	if ((select_type_param & CR_CPU) &&
@@ -147,14 +149,14 @@ extern char *select_type_param_string(uint16_t select_type_param)
 			strcat(select_str, ",");
 		strcat(select_str, "OTHER_CONS_RES");
 	}
-	if (select_type_param & CR_NHC_NO) {
+	if (select_type_param & CR_NHC) {
 		if (select_str[0])
 			strcat(select_str, ",");
-		strcat(select_str, "NHC_NO");
-	} else if (select_type_param & CR_NHC_STEP_NO) {
+		strcat(select_str, "NHC");
+	} else if (select_type_param & CR_NHC_STEP) {
 		if (select_str[0])
 			strcat(select_str, ",");
-		strcat(select_str, "NHC_STEP_NO");
+		strcat(select_str, "NHC_STEP");
 	}
 	if (select_type_param & CR_ONE_TASK_PER_CORE) {
 		if (select_str[0])
@@ -165,11 +167,6 @@ extern char *select_type_param_string(uint16_t select_type_param)
 		if (select_str[0])
 			strcat(select_str, ",");
 		strcat(select_str, "CR_CORE_DEFAULT_DIST_BLOCK");
-	}
-	if (select_type_param & CR_ALLOCATE_FULL_SOCKET) {
-		if (select_str[0])
-			strcat(select_str, ",");
-		strcat(select_str, "CR_ALLOCATE_FULL_SOCKET");
 	}
 	if (select_type_param & CR_LLN) {
 		if (select_str[0])

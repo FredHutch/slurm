@@ -3,21 +3,21 @@
 <H1>Preemption</H1>
 
 <P>
-SLURM supports job preemption, the act of stopping one or more "low-priority"
-jobs to let a "high-priority" job run uninterrupted until it completes.
-Job preemption is implemented as a variation of SLURM's
+Slurm supports job preemption, the act of stopping one or more "low-priority"
+jobs to let a "high-priority" job run.
+Job preemption is implemented as a variation of Slurm's
 <a href="gang_scheduling.html">Gang Scheduling</a> logic.
 When a high-priority job has been allocated resources that have already been
 allocated to one or more low priority jobs, the low priority job(s) are
 preempted.
 The low priority job(s) can resume once the high priority job completes.
 Alternately, the low priority job(s) can be requeued and started using other
-resources if so configured in newer versions of SLURM.
+resources if so configured in newer versions of Slurm.
 </P>
 <P>
 The job's partition priority or its Quality Of Service (QOS) can be used to
 identify the which jobs can preempt or be preempted by other jobs.
-SLURM offers the ability to configure the preemption mechanism used on a per
+Slurm offers the ability to configure the preemption mechanism used on a per
 partition or per QOS basis.
 For example, jobs in a low priority queue may get requeued,
 while jobs in a medium priority queue may get suspended.
@@ -28,7 +28,7 @@ There are several important configuration parameters relating to preemption:
 </P>
 <UL>
 <LI>
-<B>SelectType</B>: SLURM job preemption logic supports
+<B>SelectType</B>: Slurm job preemption logic supports
 nodes allocated by the <I>select/linear</I> plugin,
 socket/core/CPU resources allocated by the <I>select/cons_res</I> plugin or
 <I>select/cray</I> for Cray systems without ALPS.
@@ -64,8 +64,10 @@ QOS using the <I>slurm.conf</I> file or database respectively. This option is
 only honored if <I>PreemptMode=CANCEL</I>. The <I>GraceTime</I> is specified in
 seconds and the default value is zero, which results in no preemption delay.
 Once a job has been selected for preemption, it's end time is set to the
-current time plus <I>GraceTime</I> and the mechanism used to terminate jobs
-upon reaching their time limit is used to cancel the job.
+current time plus <I>GraceTime</I>. The job is immediately sent SIGCONT and
+SIGTERM signals in order to provide notification of its imminent termination.
+This is followed by the SIGCONT, SIGTERM and SIGKILL signal sequence upon
+reaching its new end time.
 </LI>
 <LI>
 <B>JobAcctGatherType and JobAcctGatherFrequency</B>: The "maximum data segment
@@ -100,11 +102,13 @@ priority jobs.</LI>
 Checkpointed jobs are not automatically restarted.
 <LI>A value of <I>REQUEUE</I> will requeue (if possible) or kill low priority
 jobs. Requeued jobs are permitted to be restarted on different resources.</LI>
-<LI>A value of <I>SUSPEND</I> will suspend and automatically resume the low
-priority jobs. The <I>SUSPEND</I> option must be used with the <I>GANG</I>
-option (e.g. "PreemptMode=SUSPEND,GANG") and with
-<I>PreemptType=preempt/partition_prio</I> (the logic to suspend and resume
-jobs currently only has the data structures to support partitions).</LI>
+<LI>A value of <I>SUSPEND</I> will suspend and resume jobs.
+If PreemptType=preempt/partition_prio is configured then a value of
+<I>SUSPEND</I> will suspend and automatically resume the low priority jobs.
+If PreemptType=preempt/qos is configured, then the jobs sharing resources
+will always time slice rather than one job remaining suspended.
+The <I>SUSPEND</I> option must be used with the <I>GANG</I>
+option (e.g. "PreemptMode=SUSPEND,GANG").</LI>
 <LI>A value of <I>GANG</I> may be used with any of the above values and will
 execute a module responsible for resuming jobs previously suspended for either
 gang scheduling or job preemption with suspension.</LI>
@@ -121,10 +125,10 @@ can preempt jobs from lower priority partitions.</LI>
 <LI><I>preempt/qos</I> indicates that jobs from one Quality Of Service (QOS)
 can preempt jobs from a lower QOS. These jobs can be in the same partition
 or different partitions. PreemptMode must be set to CANCEL, CHECKPOINT,
-or REQUEUE. This option requires the use of a database identifying
+REQUEUE or SUSPEND. This option requires the use of a database identifying
 available QOS and their preemption rules. This option is not compatible with
-PreemptMode=OFF or PreemptMode=SUSPEND (i.e. preempted jobs must be removed
-from the resources).</LI>
+PreemptMode=OFF and PreemptMode=SUSPEND is only supported by the
+select/cons_res plugin.</LI>
 </UL>
 </LI>
 <LI>
@@ -151,12 +155,18 @@ max_share value is 4. In order to preempt jobs (and not gang schedule them),
 always set max_share to 1. To allow up to 2 jobs from this partition to be
 allocated to a common resource (and gang scheduled), set
 <I>Shared=FORCE:2</I>.
+NOTE: <I>PreemptType=QOS</I> will permit one additional job to be run
+on the partition if started due to job preemption. For example, a configuration
+of <I>Shared=FORCE:1</I> will only permit one job per resources normally,
+but a second job can be started if done so through preemption based upon QOS.
+The use of <I>PreemptType=QOS</I> and <I>PreemptType=Suspend</I> only applies
+with <I>SelectType=cons_res</I>.
 </LI>
 </UL>
 <P>
 To enable preemption after making the configuration changes described above,
-restart SLURM if it is already running. Any change to the plugin settings in
-SLURM requires a full restart of the daemons. If you just change the partition
+restart Slurm if it is already running. Any change to the plugin settings in
+Slurm requires a full restart of the daemons. If you just change the partition
 <I>Priority</I> or <I>Shared</I> setting, this can be updated with
 <I>scontrol reconfig</I>.
 </P>
@@ -213,7 +223,7 @@ tuning parameters.
 When enabled, the gang scheduling logic (which is also supports job
 preemption) keeps track of the resources allocated to all jobs.
 For each partition an "active bitmap" is maintained that tracks all
-concurrently running jobs in the SLURM cluster.
+concurrently running jobs in the Slurm cluster.
 Each partition also maintains a job list for that partition, and a list of
 "shadow" jobs.
 The "shadow" jobs are high priority job allocations that "cast shadows" on the
@@ -361,13 +371,26 @@ $ squeue
      95       med      tmp      moe   R       0:24      1 linux
 </PRE>
 
+<H2>Another Example</H2>
+<P>
+In this example we have one partition on which we want to execute only one
+job per resource (e.g. core) at a time except when a job submitted to the
+partition from a high priority Quality Of Service (QOS) is submitted. In that
+case, we want that second high priority job to be started and be gang scheduled
+with the other jobs on overlapping resources.
+</P>
+<PRE>
+# Excerpt from slurm.conf
+PreemptMode=Suspend,Gang
+PreemptType=preempt/qos
+PartitionName=normal Nodes=linux Default=NO  Shared=FORCE:1
+</PRE>
+
 <H2><A NAME="future_work">Future Ideas</A></H2>
 
 <P>
 <B>More intelligence in the select plugins</B>: This implementation of
 preemption relies on intelligent job placement by the <I>select</I> plugins.
-In SLURM version 2.0 preemptive placement support was added to the
-SelectType plugins, but there is still room for improvement.
 </P><P>
 Take the following example:
 </P>
@@ -410,6 +433,6 @@ order to support ideal placements such as this, which can quickly complicate
 the design. Any and all help is welcome here!
 </P>
 
-<p style="text-align:center;">Last modified 3 March 2014</p>
+<p style="text-align:center;">Last modified 20 October 2015</p>
 
 <!--#include virtual="footer.txt"-->

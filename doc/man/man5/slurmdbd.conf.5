@@ -1,4 +1,5 @@
-.TH "slurmdbd.conf" "5" "September 2013" "slurmdbd.conf 14.03" "Slurm configuration file"
+.TH "slurmdbd.conf" "5" "Slurm Configuration File" "April 2015" "Slurm Configuration File"
+
 .SH "NAME"
 slurmdbd.conf \- Slurm Database Daemon (SlurmDBD) configuration file
 
@@ -54,7 +55,7 @@ reservation data, no otherwise.  Default is no.
 This script can be executed every time a rollup happens (every hour,
 day and month), depending on the Purge*After options.  This script is used
 to transfer accounting records out of the database into an archive.  It is
-used in place of the internal process used to acrhive objects.
+used in place of the internal process used to archive objects.
 The script is executed with a no arguments, The following environment
 variables are set.
 .RS
@@ -109,37 +110,53 @@ mechanism being used.
 
 .TP
 \fBAuthType\fR
-Define the authentication method for communications between SLURM
+Define the authentication method for communications between Slurm
 components.
-Acceptable values at present include "auth/none", "auth/authd",
+Acceptable values at present include "auth/none"
 and "auth/munge".
 The default value is "auth/none", which means the UID included in
 communication messages is not verified.
 This may be fine for testing purposes, but
 \fBdo not use "auth/none" if you desire any security\fR.
-"auth/authd" indicates that Brett Chun's authd is to be used (see
-"http://www.theether.org/authd/" for more information).
 "auth/munge" indicates that LLNL's Munge system is to be used
-(this is the best supported authentication mechanism for SLURM,
+(this is the best supported authentication mechanism for Slurm,
 see "https://code.google.com/p/munge/" for more information).
 SlurmDBD must be terminated prior to changing the value of \fBAuthType\fR
 and later restarted.
 
 .TP
+\fBCommitDelay\fR
+How many seconds between commits on a connection from a Slurmctld.  This
+speeds up inserts into the database dramatically.  If you are running a very
+high throughput of jobs you should consider setting this.  In testing, 1 second
+improves the slurmdbd performance dramatically and reduces overhead.  There is
+a small probability of data loss though since this creates a window in which
+if the slurmdbd seg faults or exits abnormally for any reason the data not
+committed could be lost.  While this situation should be very rare,
+it does present an extremely small risk, but may be the only way to run in
+extremely heavy environments.  In all honesty, the risk is quite low, but still
+present.
+
+.TP
 \fBDbdBackupHost\fR
-The name of the machine where the backup Slurm Database Daemon is executed.
+The short, or long, name of the machine where the backup Slurm Database Daemon
+is executed (i.e. the name returned by the command "hostname \-s").
 This host must have access to the same underlying database specified by
 the 'Storage' options mentioned below.
-This should be a node name without the full domain name.  I.e., the hostname
-returned by the \fIgethostname()\fR function cut at the first dot (e.g. use
-"tux001" rather than "tux001.my.com").
+
+.TP
+\fBDbdAddr\fR
+Name that \fBDbdHost\fR should be referred to in establishing a communications
+path. This name will be used as an argument to the gethostbyname() function for
+identification. For example, "elx0000" might be used to designate the Ethernet
+address for node "lx0000".  By default the \fBDbdAddr\fR will be identical in
+value to \fBDbdHost\fR.
 
 .TP
 \fBDbdHost\fR
-The name of the machine where the Slurm Database Daemon is executed.
-This should be a node name without the full domain name.  I.e., the hostname
-returned by the \fIgethostname()\fR function cut at the first dot (e.g. use
-"tux001" rather than "tux001.my.com").  This value must be specified.
+The short, or long, name of the machine where the Slurm Database Daemon is
+executed (i.e. the name returned by the command "hostname \-s").
+This value must be specified.
 
 .TP
 \fBDbdPort\fR
@@ -150,9 +167,54 @@ This value must be equal to the \fBAccountingStoragePort\fR parameter in the
 slurm.conf file.
 
 .TP
+\fBDebugFlags\fR
+Defines specific subsystems which should provide more detailed event logging.
+Multiple subsystems can be specified with comma separators.
+Most DebugFlags will result in verbose logging for the identified subsystems
+and could impact performance.
+Valid subsystems available today (with more to come) include:
+.RS
+.TP 17
+\fBDB_ARCHIVE\fR
+SQL statements/queries when dealing with archiving and purging the database.
+.TP
+\fBDB_ASSOC\fR
+SQL statements/queries when dealing with associations in the database.
+.TP
+\fBDB_EVENT\fR
+SQL statements/queries when dealing with (node) events in the database.
+.TP
+\fBDB_JOB\fR
+SQL statements/queries when dealing with jobs in the database.
+.TP
+\fBDB_QOS\fR
+SQL statements/queries when dealing with QOS in the database.
+.TP
+\fBDB_QUERY\fR
+SQL statements/queries when dealing with transactions and such in the database.
+.TP
+\fBDB_RESERVATION\fR
+SQL statements/queries when dealing with reservations in the database.
+.TP
+\fBDB_RESOURCE\fR
+SQL statements/queries when dealing with resources like licenses in the
+database.
+.TP
+\fBDB_STEP\fR
+SQL statements/queries when dealing with steps in the database.
+.TP
+\fBDB_USAGE\fR
+SQL statements/queries when dealing with usage queries and inserts
+in the database.
+.TP
+\fBDB_WCKEY\fR
+SQL statements/queries when dealing with wckeys in the database.
+.RE
+
+.TP
 \fBDebugLevel\fR
 The level of detail to provide the Slurm Database Daemon's logs.
-The default valus is \fBinfo\fR.
+The default value is \fBinfo\fR.
 .RS
 .TP 10
 \fBquiet\fR
@@ -227,7 +289,7 @@ The default value is "/var/run/slurmdbd.pid".
 
 .TP
 \fBPluginDir\fR
-Identifies the places in which to look for SLURM plugins.
+Identifies the places in which to look for Slurm plugins.
 This is a colon\-separated list of directories, like the PATH
 environment variable.
 The default value is "/usr/local/lib/slurm".
@@ -272,9 +334,12 @@ but can only see themselves when listing users.
 Events happening on the cluster over this age are purged from the database.
 This includes node down times and such.
 The time is a numeric value and is a number of months.  If you want to purge
-more often you can include hours, or days behind the numeric value to get
-those more frequent purges. (i.e. a value of '12hours' would purge
-everything older than 12 hours.)
+more often you can include "hours", or "days" behind the numeric value to get
+those more frequent purges (i.e. a value of "12hours" would purge
+everything older than 12 hours).
+The purge takes place at the start of the each purge interval.
+For example, if the purge time is 2 months, the purge would happen at the
+beginning of each month.
 If not set (default), then job step records are never purged.
 
 .TP
@@ -282,9 +347,12 @@ If not set (default), then job step records are never purged.
 Individual job records over this age are purged from the database.
 Aggregated information will be preserved indefinitely.
 The time is a numeric value and is a number of months.  If you want to purge
-more often you can include hours, or days behind the numeric value to get
-those more frequent purges. (i.e. a value of '12hours' would purge
-everything older than 12 hours.)
+more often you can include "hours", or "days" behind the numeric value to get
+those more frequent purges (i.e. a value of "12hours" would purge
+everything older than 12 hours).
+The purge takes place at the start of the each purge interval.
+For example, if the purge time is 2 months, the purge would happen at the
+beginning of each month.
 If not set (default), then job records are never purged.
 
 .TP
@@ -292,9 +360,12 @@ If not set (default), then job records are never purged.
 Individual reservation records over this age are purged from the database.
 Aggregated information will be preserved indefinitely.
 The time is a numeric value and is a number of months.  If you want to purge
-more often you can include hours, or days behind the numeric value to get
-those more frequent purges. (i.e. a value of '12hours' would purge
-everything older than 12 hours.)
+more often you can include "hours", or "days" behind the numeric value to get
+those more frequent purges (i.e. a value of "12hours" would purge
+everything older than 12 hours).
+The purge takes place at the start of the each purge interval.
+For example, if the purge time is 2 months, the purge would happen at the
+beginning of each month.
 If not set (default), then reservation records are never purged.
 
 .TP
@@ -302,9 +373,12 @@ If not set (default), then reservation records are never purged.
 Individual job step records over this age are purged from the database.
 Aggregated information will be preserved indefinitely.
 The time is a numeric value and is a number of months.  If you want to purge
-more often you can include hours, or days behind the numeric value to get
-those more frequent purges. (i.e. a value of '12hours' would purge
-everything older than 12 hours.)
+more often you can include "hours", or "days" behind the numeric value to get
+those more frequent purges (i.e. a value of "12hours" would purge
+everything older than 12 hours).
+The purge takes place at the start of the each purge interval.
+For example, if the purge time is 2 months, the purge would happen at the
+beginning of each month.
 If not set (default), then job step records are never purged.
 
 .TP
@@ -313,9 +387,12 @@ Records of individual suspend times for jobs over this age are purged from the
 database.
 Aggregated information will be preserved indefinitely.
 The time is a numeric value and is a number of months.  If you want to purge
-more often you can include hours, or days behind the numeric value to get
-those more frequent purges. (i.e. a value of '12hours' would purge
-everything older than 12 hours.)
+more often you can include "hours", or "days" behind the numeric value to get
+those more frequent purges (i.e. a value of "12hours" would purge
+everything older than 12 hours).
+The purge takes place at the start of the each purge interval.
+For example, if the purge time is 2 months, the purge would happen at the
+beginning of each month.
 If not set (default), then job step records are never purged.
 
 .TP
@@ -373,7 +450,10 @@ with to store the job accounting data.
 .TP
 \fBTrackWCKey\fR
 Boolean yes or no.  Used to set display and track of the Workload
-Characterization Key. Must be set to track wckey usage.
+Characterization Key. Must be set to track wckey usage.  This must be set to
+generate rolled up usage tables from WCKeys.
+NOTE: If TrackWCKey is set here and not in your various slurm.conf files all
+jobs will be attributed to their default WCKey.
 
 .TP
 \fBTrackSlurmctldDown\fR
@@ -435,17 +515,17 @@ StorageUser=database_mgr
 Copyright (C) 2008-2010 Lawrence Livermore National Security.
 Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
 .br
-Copyright (C) 2010\-2013 SchedMD LLC.
+Copyright (C) 2010\-2014 SchedMD LLC.
 .LP
-This file is part of SLURM, a resource management program.
+This file is part of Slurm, a resource management program.
 For details, see <http://slurm.schedmd.com/>.
 .LP
-SLURM is free software; you can redistribute it and/or modify it under
+Slurm is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free
 Software Foundation; either version 2 of the License, or (at your option)
 any later version.
 .LP
-SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
 details.

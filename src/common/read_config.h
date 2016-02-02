@@ -60,7 +60,9 @@ extern char *default_plugstack;
 #define ACCOUNTING_ENFORCE_SAFE   0x0010
 #define ACCOUNTING_ENFORCE_NO_JOBS 0x0020
 #define ACCOUNTING_ENFORCE_NO_STEPS 0x0040
+#define ACCOUNTING_ENFORCE_TRES   0x0080
 
+#define DEFAULT_ACCOUNTING_TRES  "cpu,mem,energy,node"
 #define DEFAULT_ACCOUNTING_DB      "slurm_acct_db"
 #define DEFAULT_ACCOUNTING_ENFORCE  0
 #define DEFAULT_ACCOUNTING_STORAGE_TYPE "accounting_storage/none"
@@ -73,7 +75,7 @@ extern char *default_plugstack;
 #define DEFAULT_FAST_SCHEDULE       1
 #define DEFAULT_FIRST_JOB_ID        1
 #define DEFAULT_GET_ENV_TIMEOUT     2
-#define DEFAULT_GROUP_INFO          600
+#define DEFAULT_GROUP_INFO          (GROUP_FORCE | 600)
 /* NOTE: DEFAULT_INACTIVE_LIMIT must be 0 for Blue Gene/L systems */
 #define DEFAULT_INACTIVE_LIMIT      0
 #define DEFAULT_JOB_ACCT_GATHER_TYPE  "jobacct_gather/none"
@@ -116,13 +118,17 @@ extern char *default_plugstack;
 #define DEFAULT_MAIL_PROG           "/bin/mail"
 #define DEFAULT_MAX_ARRAY_SIZE      1001
 #define DEFAULT_MAX_JOB_COUNT       10000
-#define DEFAULT_MAX_JOB_ID          0xffff0000
+#define DEFAULT_MAX_JOB_ID          0x7fff0000
 #define DEFAULT_MAX_STEP_COUNT      40000
+#define DEFAULT_MCS_PLUGIN          "mcs/none"
 #define DEFAULT_MEM_PER_CPU         0
 #define DEFAULT_MAX_MEM_PER_CPU     0
 #define DEFAULT_MIN_JOB_AGE         300
 #define DEFAULT_MPI_DEFAULT         "none"
+#define DEFAULT_MSG_AGGR_WINDOW_MSGS 1
+#define DEFAULT_MSG_AGGR_WINDOW_TIME 100
 #define DEFAULT_MSG_TIMEOUT         10
+#define DEFAULT_POWER_PLUGIN        ""
 #ifdef HAVE_AIX		/* AIX specific default configuration parameters */
 #  define DEFAULT_CHECKPOINT_TYPE   "checkpoint/aix"
 #  define DEFAULT_PROCTRACK_TYPE    "proctrack/aix"
@@ -142,6 +148,7 @@ extern char *default_plugstack;
 #define DEFAULT_RETURN_TO_SERVICE   0
 #define DEFAULT_RESUME_RATE         300
 #define DEFAULT_RESUME_TIMEOUT      60
+#define DEFAULT_ROUTE_PLUGIN   	    "route/default"
 #define DEFAULT_SAVE_STATE_LOC      "/var/spool"
 #define DEFAULT_SCHEDROOTFILTER     1
 #define DEFAULT_SCHEDULER_PORT      7321
@@ -185,7 +192,10 @@ extern char *default_plugstack;
 #define DEFAULT_WAIT_TIME           0
 #  define DEFAULT_TREE_WIDTH        50
 #define DEFAULT_UNKILLABLE_TIMEOUT  60 /* seconds */
-#define DEFAULT_MAX_TASKS_PER_NODE  128
+
+/* MAX_TASKS_PER_NODE is defined in slurm.h
+ */
+#define DEFAULT_MAX_TASKS_PER_NODE  MAX_TASKS_PER_NODE
 
 typedef struct slurm_conf_frontend {
 	char *allow_groups;		/* allowed group string */
@@ -241,12 +251,14 @@ typedef struct slurm_conf_partition {
 	char *alternate;	/* name of alternate partition */
 	uint16_t cr_type;	/* Custom CR values for partition (supported
 				 * by select/cons_res plugin only) */
+	char *billing_weights_str;/* per TRES billing weights */
 	uint32_t def_mem_per_cpu; /* default MB memory per allocated CPU */
 	bool default_flag;	/* Set if default partition */
 	uint32_t default_time;	/* minutes or INFINITE */
 	uint16_t disable_root_jobs; /* if set then user root can't run
 				     * jobs if NO_VAL use global
 				     * default */
+	uint16_t exclusive_user; /* 1 if node allocations by user */
 	uint32_t grace_time;	/* default grace time for partition */
 	bool     hidden_flag;	/* 1 if hidden by default */
 	bool     lln_flag;	/* 1 if nodes are selected in LLN order */
@@ -260,6 +272,7 @@ typedef struct slurm_conf_partition {
 	char 	*nodes;		/* comma delimited list names of nodes */
 	uint16_t preempt_mode;	/* See PREEMPT_MODE_* in slurm/slurm.h */
 	uint16_t priority;	/* scheduling priority for jobs */
+	char    *qos_char;      /* Name of QOS associated with partition */
 	bool     req_resv_flag; /* 1 if partition can only be used in a
 				 * reservation */
 	bool     root_only_flag;/* 1 if allocate/submit RPC can only be
@@ -523,16 +536,16 @@ extern char *prolog_flags2str(uint16_t prolog_flags);
 extern uint16_t prolog_str2flags(char *prolog_flags);
 
 /*
- * debug_flags2str - convert a DebugFlags uint32_t to the equivalent string
+ * debug_flags2str - convert a DebugFlags uint64_t to the equivalent string
  * Returns an xmalloc()ed string which the caller must free with xfree().
  */
-extern char *debug_flags2str(uint32_t debug_flags);
+extern char *debug_flags2str(uint64_t debug_flags);
 
 /*
- * debug_str2flags - Convert a DebugFlags string to the equivalent uint32_t
- * Returns NO_VAL if invalid
+ * debug_str2flags - Convert a DebugFlags string to the equivalent uint64_t
+ * Returns SLURM_ERROR if invalid
  */
-extern uint32_t debug_str2flags(char *debug_flags);
+extern int debug_str2flags(char *debug_flags, uint64_t *flags_out);
 
 /*
  * reconfig_flags2str - convert a ReconfigFlags uint16_t to the equivalent string
@@ -563,5 +576,13 @@ extern char *get_extra_conf_path(char *conf_name);
  * returns true if slurm_prog_name (set in log.c) is in list, false otherwise.
  */
 extern bool run_in_daemon(char *daemons);
+
+/* Expand a feature of "knl" to all appropriate KNL options
+ * features IN/OUT - Expand string as appropriate, must be xmalloc'ed */
+extern void add_knl_features(char **features);
+
+/* Translate a job constraint specification into a node feature specification
+ * RET - String MUST be xfreed */
+extern char *xlate_features(char *job_features);
 
 #endif /* !_READ_CONFIG_H */

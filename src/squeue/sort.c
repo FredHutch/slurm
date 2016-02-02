@@ -257,12 +257,26 @@ static inline int _diff_uint32(uint32_t value_1, uint32_t value_2)
 		return -1;
 	return 0;
 }
-static void _get_job_info_from_void(job_info_t **j1, job_info_t **j2, void *v1, void *v2)
+static void _get_job_info_from_void(job_info_t **j1, job_info_t **j2,
+				    void *void1, void *void2)
 {
-	*j1 = *(job_info_t **)v1;
-	*j2 = *(job_info_t **)v2;
+	*j1 = (*(squeue_job_rec_t **)void1)->job_ptr;
+	*j2 = (*(squeue_job_rec_t **)void2)->job_ptr;
 }
-static void _get_step_info_from_void(job_step_info_t **s1, job_step_info_t **s2, void *v1, void *v2)
+static void _get_part_prio_info_from_void(uint32_t *prio1, uint32_t *prio2,
+					  void *void1, void *void2)
+{
+	*prio1 = (*(squeue_job_rec_t **)void1)->part_prio;
+	*prio2 = (*(squeue_job_rec_t **)void2)->part_prio;
+}
+static void _get_part_name_info_from_void(char **name1, char **name2,
+					  void *void1, void *void2)
+{
+	*name1 = (*(squeue_job_rec_t **)void1)->part_name;
+	*name2 = (*(squeue_job_rec_t **)void2)->part_name;
+}
+static void _get_step_info_from_void(job_step_info_t **s1, job_step_info_t **s2,
+				     void *v1, void *v2)
 {
 	*s1 = *(job_step_info_t **)v1;
 	*s2 = *(job_step_info_t **)v2;
@@ -348,10 +362,24 @@ static int _sort_job_by_id(void *void1, void *void2)
 	int diff;
 	job_info_t *job1;
 	job_info_t *job2;
+	uint32_t job_id1, job_id2;
 
 	_get_job_info_from_void(&job1, &job2, void1, void2);
 
-	diff = _diff_uint32(job1->job_id , job2->job_id);
+	if (job1->array_task_id == NO_VAL)
+		job_id1 = job1->job_id;
+	else
+		job_id1 = job1->array_job_id;
+	if (job2->array_task_id == NO_VAL)
+		job_id2 = job2->job_id;
+	else
+		job_id2 = job2->array_job_id;
+	if (job_id1 == job_id2) {
+		job_id1 = job1->array_task_id;
+		job_id2 = job2->array_task_id;
+	}
+
+	diff = _diff_uint32(job_id1, job_id2);
 
 	if (reverse_order)
 		diff = -diff;
@@ -626,11 +654,11 @@ static int _sort_job_by_time_left(void *void1, void *void2)
 	if ((job1->time_limit == INFINITE) || (job1->time_limit == NO_VAL))
 		time1 = INFINITE;
 	else
-		time1 = job1->time_limit - job_time_used(job1);
+		time1 = job1->time_limit * 60 - job_time_used(job1);
 	if ((job2->time_limit == INFINITE) || (job2->time_limit == NO_VAL))
 		time2 = INFINITE;
 	else
-		time2 = job2->time_limit - job_time_used(job2);
+		time2 = job2->time_limit * 60 - job_time_used(job2);
 	diff = _diff_time(time1, time2);
 
 	if (reverse_order)
@@ -702,17 +730,11 @@ static int _sort_job_by_time_used(void *void1, void *void2)
 static int _sort_job_by_partition(void *void1, void *void2)
 {
 	int diff;
-	job_info_t *job1;
-	job_info_t *job2;
-	char *val1 = "", *val2 = "";
+	char *val1 = NULL, *val2 = NULL;
 
-	_get_job_info_from_void(&job1, &job2, void1, void2);
+	_get_part_name_info_from_void(&val1, &val1, void1, void2);
 
-	if (job1->partition)
-		val1 = job1->partition;
-	if (job2->partition)
-		val2 = job2->partition;
-	diff = strcmp(val1, val2);
+	diff = xstrcmp(val1, val2);
 
 	if (reverse_order)
 		diff = -diff;
@@ -722,12 +744,16 @@ static int _sort_job_by_partition(void *void1, void *void2)
 static int _sort_job_by_priority(void *void1, void *void2)
 {
 	int diff;
-	job_info_t *job1;
-	job_info_t *job2;
+	job_info_t *job1, *job2;
+	uint32_t prio1 = 0, prio2 = 0;
 
-	_get_job_info_from_void(&job1, &job2, void1, void2);
+	_get_part_prio_info_from_void(&prio1, &prio2, void1, void2);
+	diff = _diff_uint32(prio1, prio2);
 
-	diff = _diff_uint32(job1->priority, job2->priority);
+	if (diff == 0) {  /* Same partition priority, test job priority */
+		_get_job_info_from_void(&job1, &job2, void1, void2);
+		diff = _diff_uint32(job1->priority, job2->priority);
+	}
 
 	if (reverse_order)
 		diff = -diff;
@@ -758,11 +784,9 @@ static int _sort_job_by_user_name(void *void1, void *void2)
 
 	_get_job_info_from_void(&job1, &job2, void1, void2);
 
-	name1 = uid_to_string((uid_t) job1->user_id);
-	name2 = uid_to_string((uid_t) job2->user_id);
+	name1 = uid_to_string_cached((uid_t) job1->user_id);
+	name2 = uid_to_string_cached((uid_t) job2->user_id);
 	diff = strcmp(name1, name2);
-	xfree(name1);
-	xfree(name2);
 
 	if (reverse_order)
 		diff = -diff;
@@ -979,11 +1003,9 @@ static int _sort_step_by_user_name(void *void1, void *void2)
 
 	_get_step_info_from_void(&step1, &step2, void1, void2);
 
-	name1 = uid_to_string((uid_t) step1->user_id);
-	name2 = uid_to_string((uid_t) step2->user_id);
+	name1 = uid_to_string_cached((uid_t) step1->user_id);
+	name2 = uid_to_string_cached((uid_t) step2->user_id);
 	diff = strcmp(name1, name2);
-	xfree(name1);
-	xfree(name2);
 
 	if (reverse_order)
 		diff = -diff;

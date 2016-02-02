@@ -46,6 +46,7 @@
 #include "src/common/macros.h"
 #include "src/common/read_config.h"
 #include "src/common/slurm_protocol_defs.h"
+#include "src/common/slurm_time.h"
 #include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
@@ -90,6 +91,7 @@ int main(int argc, char *argv[])
 			_sort_rpc();
 			rc = _print_stats();
 #ifdef MEMORY_LEAK_DEBUG
+			uid_cache_clear();
 			slurm_free_stats_response_msg(buf);
 			xfree(rpc_type_ave_time);
 			xfree(rpc_user_ave_time);
@@ -111,8 +113,8 @@ static int _print_stats(void)
 	}
 
 	printf("*******************************************************\n");
-	printf("sdiag output at %s", ctime(&buf->req_time));
-	printf("Data since      %s", ctime(&buf->req_time_start));
+	printf("sdiag output at %s", slurm_ctime(&buf->req_time));
+	printf("Data since      %s", slurm_ctime(&buf->req_time_start));
 	printf("*******************************************************\n");
 
 	printf("Server thread count: %d\n", buf->server_thread_count);
@@ -150,11 +152,11 @@ static int _print_stats(void)
 	printf("\tTotal backfilled jobs (since last stats cycle start): %u\n",
 	       buf->bf_last_backfilled_jobs);
 	printf("\tTotal cycles: %u\n", buf->bf_cycle_counter);
-	printf("\tLast cycle when: %s", ctime(&buf->bf_when_last_cycle));
+	printf("\tLast cycle when: %s", slurm_ctime(&buf->bf_when_last_cycle));
 	printf("\tLast cycle: %u\n", buf->bf_cycle_last);
 	printf("\tMax cycle:  %u\n", buf->bf_cycle_max);
 	if (buf->bf_cycle_counter > 0) {
-		printf("\tMean cycle: %u\n",
+		printf("\tMean cycle: %"PRIu64"\n",
 		       buf->bf_cycle_sum / buf->bf_cycle_counter);
 	}
 	printf("\tLast depth cycle: %u\n", buf->bf_last_depth);
@@ -186,7 +188,7 @@ static int _print_stats(void)
 			printf("\n");
 		printf("\t%-16s(%8u) count:%-6u "
 		       "ave_time:%-6u total_time:%"PRIu64"\n",
-		       uid_to_string((uid_t)buf->rpc_user_id[i]),
+		       uid_to_string_cached((uid_t)buf->rpc_user_id[i]),
 		       buf->rpc_user_id[i], buf->rpc_user_cnt[i],
 		       rpc_user_ave_time[i], buf->rpc_user_time[i]);
 	}

@@ -62,17 +62,18 @@ extern void pack_slurmd_conf_lite(slurmd_conf_t *conf, Buf buffer)
 	packstr(conf->job_acct_gather_freq, buffer);
 	packstr(conf->job_acct_gather_type, buffer);
 	pack16(conf->propagate_prio, buffer);
-	pack32(conf->debug_flags, buffer);
+	pack64(conf->debug_flags, buffer);
 	pack32(conf->debug_level, buffer);
 	pack32(conf->daemonize, buffer);
 	pack32((uint32_t)conf->slurm_user_id, buffer);
 	pack16(conf->use_pam, buffer);
-	pack16(conf->task_plugin_param, buffer);
+	pack32(conf->task_plugin_param, buffer);
 	packstr(conf->node_topo_addr, buffer);
 	packstr(conf->node_topo_pattern, buffer);
 	pack32((uint32_t)conf->port, buffer);
 	pack16(conf->log_fmt, buffer);
 	pack16(conf->mem_limit_enforce, buffer);
+	pack64(conf->msg_aggr_window_msgs, buffer);
 }
 
 extern int unpack_slurmd_conf_lite_no_alloc(slurmd_conf_t *conf, Buf buffer)
@@ -99,7 +100,7 @@ extern int unpack_slurmd_conf_lite_no_alloc(slurmd_conf_t *conf, Buf buffer)
 	safe_unpackstr_xmalloc(&conf->job_acct_gather_type, &uint32_tmp,
 			       buffer);
 	safe_unpack16(&conf->propagate_prio, buffer);
-	safe_unpack32(&conf->debug_flags, buffer);
+	safe_unpack64(&conf->debug_flags, buffer);
 	safe_unpack32(&uint32_tmp, buffer);
 	conf->debug_level = uint32_tmp;
 	safe_unpack32(&uint32_tmp, buffer);
@@ -107,13 +108,15 @@ extern int unpack_slurmd_conf_lite_no_alloc(slurmd_conf_t *conf, Buf buffer)
 	safe_unpack32(&uint32_tmp, buffer);
 	conf->slurm_user_id = (uid_t)uint32_tmp;
 	safe_unpack16(&conf->use_pam, buffer);
-	safe_unpack16(&conf->task_plugin_param, buffer);
+	safe_unpack32(&conf->task_plugin_param, buffer);
 	safe_unpackstr_xmalloc(&conf->node_topo_addr, &uint32_tmp, buffer);
 	safe_unpackstr_xmalloc(&conf->node_topo_pattern, &uint32_tmp, buffer);
 	safe_unpack32(&uint32_tmp, buffer);
+	conf->port = uint32_tmp;
 	safe_unpack16(&conf->log_fmt, buffer);
 	safe_unpack16(&conf->mem_limit_enforce, buffer);
-	conf->port = uint32_tmp;
+	safe_unpack64(&conf->msg_aggr_window_msgs, buffer);
+
 	return SLURM_SUCCESS;
 
 unpack_error:

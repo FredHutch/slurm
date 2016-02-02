@@ -208,10 +208,8 @@ static int dyn_spank_set_job_env (const char *var, const char *val, int ovwt);
 
 static void spank_stack_destroy (struct spank_stack *stack)
 {
-	if (stack->plugin_list)
-		list_destroy (stack->plugin_list);
-	if (stack->option_cache)
-		list_destroy (stack->option_cache);
+	FREE_NULL_LIST (stack->plugin_list);
+	FREE_NULL_LIST (stack->option_cache);
 	xfree (stack->plugin_path);
 	xfree (stack);
 }
@@ -553,7 +551,7 @@ static int _spank_stack_load(struct spank_stack *stack, const char *path)
 	 *  Try to open plugstack.conf. A missing config file is not an
 	 *   error, but is equivalent to an empty file.
 	 */
-	if (!(fp = safeopen(path, "r", SAFEOPEN_NOCREATE))) {
+	if (!(fp = safeopen(path, "r", SAFEOPEN_NOCREATE|SAFEOPEN_LINK_OK))) {
 		if (errno == ENOENT)
 			return (0);
 		error("spank: Failed to open %s: %m", path);
@@ -1242,7 +1240,7 @@ _get_next_segment (char **from, int width, char *buf, int bufsiz)
 }
 
 static int
-_term_columns ()
+_term_columns (void)
 {
 	char *val;
 	int  cols = 80;
@@ -1822,7 +1820,7 @@ int spank_symbol_supported (const char *name)
 {
 	int i;
 
-	if ((name == NULL))
+	if (name == NULL)
 		return (-1);
 
 	for (i = 0; i < n_spank_syms; i++) {

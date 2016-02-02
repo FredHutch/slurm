@@ -53,15 +53,16 @@
 
 #include "slurm/slurm.h"
 
+#include "src/common/cpu_frequency.h"
 #include "src/common/env.h"
 #include "src/common/plugstack.h"
+#include "src/common/proc_args.h"
 #include "src/common/read_config.h"
 #include "src/common/slurm_rlimits_info.h"
 #include "src/common/xstring.h"
 #include "src/common/xmalloc.h"
 
 #include "src/sbatch/opt.h"
-#include "src/sbatch/mult_cluster.h"
 
 #define MAX_RETRIES 15
 
@@ -76,6 +77,7 @@ static int   _set_rlimit_env(void);
 static void  _set_spank_env(void);
 static void  _set_submit_dir_env(void);
 static int   _set_umask_env(void);
+static int   _job_wait(uint32_t job_id);
 
 int main(int argc, char *argv[])
 {
@@ -85,7 +87,7 @@ int main(int argc, char *argv[])
 	char *script_name;
 	void *script_body;
 	int script_size = 0;
-	int retries = 0;
+	int rc = 0, retries = 0;
 
 	slurm_conf_init(NULL);
 	log_init(xbasename(argv[0]), logopt, 0, NULL);
@@ -159,8 +161,13 @@ int main(int argc, char *argv[])
 
 	/* If can run on multiple clusters find the earliest run time
 	 * and run it there */
-	if (sbatch_set_first_avail_cluster(&desc) != SLURM_SUCCESS)
+	if (opt.clusters &&
+	    slurmdb_get_first_avail_cluster(&desc, opt.clusters,
+			&working_cluster_rec) != SLURM_SUCCESS) {
+		print_db_notok(opt.clusters, 0);
 		exit(error_exit);
+	}
+
 
 	if (_check_cluster_specific_settings(&desc) != SLURM_SUCCESS)
 		exit(error_exit);
@@ -211,10 +218,55 @@ int main(int argc, char *argv[])
 			printf(";%s", working_cluster_rec->name);
 		printf("\n");
 	}
+	if (opt.wait)
+		rc = _job_wait(resp->job_id);
 
 	xfree(desc.script);
 	slurm_free_submit_response_response_msg(resp);
-	return 0;
+	return rc;
+}
+
+/* Wait for specified job ID to terminate, return it's exit code */
+static int _job_wait(uint32_t job_id)
+{
+	slurm_job_info_t *job_ptr;
+	job_info_msg_t *resp = NULL;
+	int ec = 0, ec2, i, rc;
+	int sleep_time = 2;
+	bool complete = false;
+
+	while (!complete) {
+		complete = true;
+		sleep(sleep_time);
+		sleep_time = MIN(sleep_time + 2, 10);
+
+		rc = slurm_load_job(&resp, job_id, SHOW_ALL);
+		if (rc == SLURM_SUCCESS) {
+			for (i = 0, job_ptr = resp->job_array;
+			     (i < resp->record_count) && complete;
+			     i++, job_ptr++) {
+				if (IS_JOB_FINISHED(job_ptr)) {
+					if (WIFEXITED(job_ptr->exit_code)) {
+						ec2 = WEXITSTATUS(job_ptr->
+								  exit_code);
+					} else
+						ec2 = 1;
+					ec = MAX(ec, ec2);
+				} else {
+					complete = false;
+				}
+			}
+			slurm_free_job_info_msg(resp);
+		} else if (rc == ESLURM_INVALID_JOB_ID) {
+			error("Job %u no longer found and exit code not found",
+			      job_id);
+		} else {
+			error("Currently unable to load job state "
+			      "information, retrying: %m");
+		}
+	}
+
+	return ec;
 }
 
 static char *_find_quote_token(char *tmp, char *sep, char **last)
@@ -259,11 +311,14 @@ static char *_find_quote_token(char *tmp, char *sep, char **last)
 			*last = &start[i];
 			return start;
 		}
-		
+
 	}
 }
 
-/* Propagate select user environment variables to the job */
+/* Propagate select user environment variables to the job.
+ * If ALL is among the specified variables propaagte
+ * the entire user environment as well.
+ */
 static void _env_merge_filter(job_desc_msg_t *desc)
 {
 	extern char **environ;
@@ -273,13 +328,21 @@ static void _env_merge_filter(job_desc_msg_t *desc)
 	tmp = xstrdup(opt.export_env);
 	tok = _find_quote_token(tmp, ",", &last);
 	while (tok) {
+
+		if (strcasecmp(tok, "ALL") == 0) {
+			env_array_merge(&desc->environment,
+					(const char **)environ);
+			tok = _find_quote_token(NULL, ",", &last);
+			continue;
+		}
+
 		if (strchr(tok, '=')) {
 			save_env[0] = tok;
 			env_array_merge(&desc->environment,
 					(const char **)save_env);
 		} else {
 			len = strlen(tok);
-			for (i=0; environ[i]; i++) {
+			for (i = 0; environ[i]; i++) {
 				if (strncmp(tok, environ[i], len) ||
 				    (environ[i][len] != '='))
 					continue;
@@ -311,17 +374,20 @@ static int _check_cluster_specific_settings(job_desc_msg_t *req)
 		/*
 		 * Fix options and inform user, but do not abort submission.
 		 */
-		if (req->shared && req->shared != (uint16_t)NO_VAL) {
-			info("--share is not (yet) supported on Cray.");
-			req->shared = false;
+		if (req->shared && (req->shared != (uint16_t)NO_VAL)) {
+			info("--share is not supported on Cray/ALPS systems.");
+			req->shared = (uint16_t)NO_VAL;
 		}
-		if (req->overcommit && req->overcommit != (uint8_t)NO_VAL) {
-			info("--overcommit is not supported on Cray.");
+		if (req->overcommit && (req->overcommit != (uint8_t)NO_VAL)) {
+			info("--overcommit is not supported on Cray/ALPS "
+			     "systems.");
 			req->overcommit = false;
 		}
-		if (req->wait_all_nodes && req->wait_all_nodes != (uint16_t)NO_VAL) {
-			info("--wait-all-nodes is handled automatically on Cray.");
-			req->wait_all_nodes = false;
+		if (req->wait_all_nodes &&
+		    (req->wait_all_nodes != (uint16_t)NO_VAL)) {
+			info("--wait-all-nodes is handled automatically on "
+			     "Cray/ALPS systems.");
+			req->wait_all_nodes = (uint16_t)NO_VAL;
 		}
 	}
 	return rc;
@@ -369,10 +435,6 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 
 	if (opt.array_inx)
 		desc->array_inx = xstrdup(opt.array_inx);
-	if (opt.cpu_bind)
-		desc->cpu_bind       = opt.cpu_bind;
-	if (opt.cpu_bind_type)
-		desc->cpu_bind_type  = opt.cpu_bind_type;
 	if (opt.mem_bind)
 		desc->mem_bind       = opt.mem_bind;
 	if (opt.mem_bind_type)
@@ -390,8 +452,12 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 	desc->mail_type = opt.mail_type;
 	if (opt.mail_user)
 		desc->mail_user = xstrdup(opt.mail_user);
+	if (opt.burst_buffer)
+		desc->burst_buffer = opt.burst_buffer;
 	if (opt.begin)
 		desc->begin_time = opt.begin;
+	if (opt.deadline)
+		desc->deadline = opt.deadline;
 	if (opt.account)
 		desc->account = xstrdup(opt.account);
 	if (opt.comment)
@@ -466,7 +532,8 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 		desc->time_limit = opt.time_limit;
 	if (opt.time_min  != NO_VAL)
 		desc->time_min = opt.time_min;
-	desc->shared = opt.shared;
+	if (opt.shared != (uint16_t) NO_VAL)
+		desc->shared = opt.shared;
 
 	desc->wait_all_nodes = opt.wait_all_nodes;
 	if (opt.warn_flags)
@@ -500,7 +567,7 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 				    "SLURM_GET_USER_ENV", "1");
 	}
 
-	if (opt.distribution == SLURM_DIST_ARBITRARY) {
+	if ((opt.distribution & SLURM_DIST_STATE_BASE) == SLURM_DIST_ARBITRARY) {
 		env_array_overwrite_fmt(&desc->environment,
 					"SLURM_ARBITRARY_NODELIST",
 					"%s", desc->req_nodes);
@@ -527,11 +594,22 @@ static int _fill_job_desc_from_opts(job_desc_msg_t *desc)
 		desc->spank_job_env      = opt.spank_job_env;
 		desc->spank_job_env_size = opt.spank_job_env_size;
 	}
+
+	desc->cpu_freq_min = opt.cpu_freq_min;
+	desc->cpu_freq_max = opt.cpu_freq_max;
+	desc->cpu_freq_gov = opt.cpu_freq_gov;
+
 	if (opt.req_switch >= 0)
 		desc->req_switch = opt.req_switch;
 	if (opt.wait4switch >= 0)
 		desc->wait4switch = opt.wait4switch;
 
+	if (opt.power_flags)
+		desc->power_flags = opt.power_flags;
+	if (opt.kill_invalid_dep)
+		desc->bitflags = opt.kill_invalid_dep;
+	if (opt.mcs_label)
+		desc->mcs_label = xstrdup(opt.mcs_label);
 
 	return 0;
 }

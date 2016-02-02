@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Confirms job array dependencies.
@@ -44,13 +44,13 @@ if {$array_size > [get_array_config]} {
 }
 
 exec $bin_rm -f $script
-make_bash_script $script "sleep 10; sleep \$SLURM_ARRAY_TASK_ID"
+make_bash_script $script "sleep \$(( ( RANDOM % 10 ) + 1 ))"
 
 #
 # Submit a job array for first dependency test
 #
 set job_id 0
-spawn $sbatch -N1 -t1 -a 0-$top_array_task_id -o /dev/null -e /dev/null $script
+spawn $sbatch -N1 -t1 -a 0-$top_array_task_id -o /dev/null -e /dev/null --mem=10 $script
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
@@ -70,11 +70,11 @@ if { $job_id == 0 } {
 }
 
 #
-# Submit a dependent job depedent upon a single job array element of that job array
+# Submit a dependent job dependent upon a single job array element of that job array
 #
 set timeout $max_job_delay
 set match_job_state 0
-set srun_pid [spawn $srun -t1 --dependency=afterany:$job_id\_$top_array_task_id $scontrol show job $job_id\_$top_array_task_id]
+set srun_pid [spawn $srun -t1 --dependency=afterany:$job_id\_$top_array_task_id --mem=10 $scontrol show job $job_id\_$top_array_task_id]
 expect {
 	-re "JobState=COMPLETED|COMPLETING" {
 		set match_job_state 1
@@ -102,7 +102,7 @@ send_user "\nSo far, so good\n\n\n"
 # Submit a job array for second dependency test
 #
 set job_id 0
-spawn $sbatch -N1 -t1 -a 0-[expr $array_size - 1] -o /dev/null -e /dev/null $script
+spawn $sbatch -N1 -t1 -a 0-[expr $array_size - 1] -o /dev/null -e /dev/null --mem=10 $script
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
@@ -122,11 +122,11 @@ if { $job_id == 0 } {
 }
 
 #
-# Submit a dependent job depedent upon a full job array
+# Submit a dependent job dependent upon a full job array
 #
 set timeout $max_job_delay
 set match_job_state 0
-set srun_pid [spawn $srun -t1 --dependency=afterany:$job_id $scontrol show job $job_id]
+set srun_pid [spawn $srun -t1 --dependency=afterany:$job_id --mem=10 $scontrol show job $job_id]
 expect {
 	-re "JobState=COMPLETED|COMPLETING" {
 		incr match_job_state

@@ -9,8 +9,10 @@ generated_html = \
 	add.html \
 	api.html \
 	authplugins.html \
+	bb_plugins.html \
 	big_sys.html \
 	bluegene.html \
+	burst_buffer.html \
 	cgroups.html \
 	checkpoint_blcr.html \
 	checkpoint_plugins.html \
@@ -27,7 +29,6 @@ generated_html = \
 	dist_plane.html \
 	documentation.html \
 	download.html \
-	dynalloc.html \
 	elastic_computing.html \
 	ext_sensorsplugins.html \
 	faq.html \
@@ -39,6 +40,7 @@ generated_html = \
 	high_throughput.html \
 	ibm.html \
 	ibm-pe.html \
+	intel_knl.html \
 	jobacct_gatherplugins.html \
 	job_array.html \
 	job_container_plugins.html \
@@ -47,10 +49,14 @@ generated_html = \
 	job_submit_plugins.html \
 	jobcompplugins.html \
 	launch_plugins.html \
+	licenses.html \
+	fair_tree.html \
 	mail.html \
 	man_index.html \
 	maui.html \
 	mc_support.html \
+	mcs.html \
+	mcs_plugins.html \
 	meetings.html \
 	moab.html \
 	mpi_guide.html \
@@ -60,11 +66,12 @@ generated_html = \
 	overview.html \
 	platforms.html \
 	plugins.html \
+	power_mgmt.html \
 	power_save.html \
+	power_plugins.html \
 	preempt.html \
 	preemption_plugins.html \
 	priority_multifactor.html \
-	priority_multifactor2.html \
 	priority_multifactor3.html \
 	priority_plugins.html \
 	proctrack_plugins.html \
@@ -77,6 +84,7 @@ generated_html = \
 	reservations.html \
 	resource_limits.html \
 	rosetta.html \
+	route_plugin.html \
 	rpc.html \
 	sched_config.html \
 	schedplugins.html \
@@ -86,16 +94,17 @@ generated_html = \
 	slurmctld_plugstack.html \
 	slurm_ug_agenda.html \
 	slurm_ug_cfp.html \
-	slurm_ug_registration.html \
-	sun_const.html \
 	switchplugins.html \
 	taskplugins.html \
 	team.html \
 	testimonials.html \
 	topology.html \
 	topology_plugin.html \
+	tres.html \
 	troubleshoot.html \
-	tutorials.html
+	tutorials.html \
+	user_permissions.html \
+	wckey.html
 
 html_DATA = \
 	${generated_html} \
@@ -113,7 +122,6 @@ html_DATA = \
 	ibm_pe_fig2.png \
 	k_function.gif \
 	linuxstyles.css \
-	lll.gif \
 	mc_support.gif \
 	plane_ex1.gif \
 	plane_ex2.gif \

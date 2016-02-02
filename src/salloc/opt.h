@@ -84,8 +84,6 @@ typedef struct salloc_options {
 	int ntasks_per_node;	/* --ntasks-per-node=n		*/
 	int ntasks_per_socket;	/* --ntasks-per-socket=n	*/
 	int ntasks_per_core;	/* --ntasks-per-core=n		*/
-	cpu_bind_type_t cpu_bind_type; /* --cpu_bind=           */
-	char *cpu_bind;		/* binding map for map/mask_cpu */
 	mem_bind_type_t mem_bind_type; /* --mem_bind=		*/
 	char *mem_bind;		/* binding map for map/mask_mem	*/
 	bool extra_set;		/* true if extra node info explicitly set */
@@ -165,6 +163,13 @@ typedef struct salloc_options {
 				 * Prolog and Epilog		*/
 	int spank_job_env_size;	/* size of spank_job_env	*/
 	int core_spec;		/* --core-spec=n,      -S n	*/
+	char *burst_buffer;	/* -bb				*/
+	uint32_t cpu_freq_min;  /* Minimum cpu frequency  */
+	uint32_t cpu_freq_max;  /* Maximum cpu frequency  */
+	uint32_t cpu_freq_gov;  /* cpu frequency governor */
+	uint8_t power_flags;	/* Power management options	*/
+	char *mcs_label;	/* mcs label if mcs plugin in use */
+	time_t deadline;	/* --deadline                   */
 } opt_t;
 
 extern opt_t opt;

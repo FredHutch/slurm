@@ -88,16 +88,12 @@
  * only load job completion logging plugins if the plugin_type string has a
  * prefix of "jobcomp/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the job completion logging API
- * matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]      = "Process tracking via process group ID plugin";
 const char plugin_type[]      = "proctrack/pgid";
-const uint32_t plugin_version = 91;
+const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 
 /*
  * init() is called when the plugin is loaded, before any other functions
@@ -185,7 +181,10 @@ proctrack_p_wait(uint64_t cont_id)
 		if (delay < 120) {
 			delay *= 2;
 		} else {
-			error("Unable to destroy container %"PRIu64"", cont_id);
+			error("%s: Unable to destroy container %"PRIu64" "
+			      "in pgid plugin, giving up after %d sec",
+			      __func__, cont_id, delay);
+			break;
 		}
 	}
 
@@ -215,8 +214,7 @@ proctrack_p_get_pids(uint64_t cont_id, pid_t **pids, int *npids)
 		if ((num[0] < '0') || (num[0] > '9'))
 			continue;
 		ret_l = strtol(num, &endptr, 10);
-		if ((ret_l == LONG_MIN) || (ret_l == LONG_MAX) ||
-		    (errno == ERANGE)) {
+		if ((ret_l == LONG_MIN) || (ret_l == LONG_MAX)) {
 			error("couldn't do a strtol on str %s(%ld): %m",
 			      num, ret_l);
 			continue;

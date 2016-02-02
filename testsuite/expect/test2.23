@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Validate scontrol requeuehold State=SpecialExit.
@@ -36,6 +36,12 @@ set job_id             0
 set exit_code          0
 
 print_header $test_id
+
+set min_age [get_min_job_age]
+if {$min_age < 10} {
+	send_user "\nWARNING: MinJobAge too low for this test ($min_age < 10)\n"
+	exit 0
+}
 
 # Remove any vestigial files
 exec $bin_rm -f $script

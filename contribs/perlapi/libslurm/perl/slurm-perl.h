@@ -9,14 +9,16 @@
 
 
 /* these declaration are not in slurm.h */
-#define xmalloc(__sz) \
-		slurm_xmalloc (__sz, __FILE__, __LINE__, __FUNCTION__)
+#ifndef xfree
 #define xfree(__p) \
 	slurm_xfree((void **)&(__p), __FILE__, __LINE__, __FUNCTION__)
-extern void slurm_xfree(void **, const char *, int, const char *);
-extern void *slurm_xmalloc(size_t, const char *, int, const char *);
+#define xmalloc(__sz) \
+	slurm_xmalloc (__sz, true, __FILE__, __LINE__, __FUNCTION__)
+#endif
 
-extern void slurm_api_set_conf_file(char *pathname);
+extern void slurm_xfree(void **, const char *, int, const char *);
+extern void *slurm_xmalloc(size_t, bool, const char *, int, const char *);
+
 extern void slurm_api_clear_config(void);
 
 extern void slurm_list_iterator_destroy(ListIterator itr);
@@ -25,11 +27,11 @@ extern void slurm_list_iterator_destroy(ListIterator itr);
 extern char *slurm_preempt_mode_string(uint16_t preempt_mode);
 extern uint16_t slurm_preempt_mode_num(const char *preempt_mode);
 extern char *slurm_job_reason_string(enum job_state_reason inx);
-extern char *slurm_job_state_string(uint16_t inx);
-extern char *slurm_job_state_string_compact(uint16_t inx);
+extern char *slurm_job_state_string(uint32_t inx);
+extern char *slurm_job_state_string_compact(uint32_t inx);
 extern int   slurm_job_state_num(const char *state_name);
-extern char *slurm_node_state_string(uint16_t inx);
-extern char *slurm_node_state_string_compact(uint16_t inx);
+extern char *slurm_node_state_string(uint32_t inx);
+extern char *slurm_node_state_string_compact(uint32_t inx);
 extern char *slurm_reservation_flags_string(uint16_t inx);
 extern void  slurm_private_data_string(uint16_t private_data,
 				       char *str, int str_len);

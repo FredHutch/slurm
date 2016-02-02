@@ -110,6 +110,8 @@ void bit_set(bitstr_t *b, bitoff_t bit);
 void bit_clear(bitstr_t *b, bitoff_t bit);
 void bit_nclear(bitstr_t *b, bitoff_t start, bitoff_t stop);
 void bit_nset(bitstr_t *b, bitoff_t start, bitoff_t stop);
+void bit_set_all(bitstr_t *b);
+void bit_clear_all(bitstr_t *b);
 
 /* changed interface from Vixie macros */
 bitoff_t bit_ffc(bitstr_t *b);
@@ -128,6 +130,7 @@ void	bit_or(bitstr_t *b1, bitstr_t *b2);
 int32_t	bit_set_count(bitstr_t *b);
 int32_t	bit_set_count_range(bitstr_t *b, int32_t start, int32_t end);
 int32_t	bit_clear_count(bitstr_t *b);
+int32_t	bit_clear_count_range(bitstr_t *b, int32_t start, int32_t end);
 int32_t	bit_nset_max_count(bitstr_t *b);
 bitstr_t *bit_rotate_copy(bitstr_t *b1, int32_t n, bitoff_t nbits);
 void	bit_rotate(bitstr_t *b1, int32_t n);

@@ -115,6 +115,7 @@ const char *node_select_syms[] = {
 	"select_p_ba_init",
 	"select_p_ba_fini",
 	"select_p_ba_get_dims",
+	"select_p_ba_cnodelist2bitmap",
 };
 
 strong_alias(destroy_select_ba_request,	slurm_destroy_select_ba_request);
@@ -135,8 +136,7 @@ extern void destroy_select_ba_request(void *arg)
 
 	if (ba_request) {
 		xfree(ba_request->save_name);
-		if (ba_request->elongate_geos)
-			list_destroy(ba_request->elongate_geos);
+		FREE_NULL_LIST(ba_request->elongate_geos);
 
 		xfree(ba_request->blrtsimage);
 		xfree(ba_request->linuximage);
@@ -210,23 +210,6 @@ extern int slurm_select_init(bool only_default)
 	if (working_cluster_rec) {
 		/* just ignore warnings here */
 	} else {
-#ifdef HAVE_XCPU
-		if (strcasecmp(type, "select/linear")) {
-			error("%s is incompatible with XCPU use", type);
-			fatal("Use SelectType=select/linear");
-		}
-#endif
-		if (!strcasecmp(type, "select/linear")) {
-			uint16_t cr_type = slurm_get_select_type_param();
-			if ((cr_type & CR_SOCKET) || (cr_type & CR_CORE) ||
-			    (cr_type & CR_CPU)) {
-				fatal("Invalid SelectTypeParameters for "
-				      "select/linear: %s (%u)",
-				      select_type_param_string(cr_type),
-				      cr_type);
-			}
-		}
-
 #ifdef HAVE_BG
 		if (strcasecmp(type, "select/bluegene")) {
 			error("%s is incompatible with BlueGene", type);
@@ -396,11 +379,25 @@ skip_load_all:
 
 	}
 	init_run = true;
-
 done:
 	slurm_mutex_unlock( &select_context_lock );
+	if (!working_cluster_rec) {
+		if (select_running_linear_based()) {
+			uint16_t cr_type = slurm_get_select_type_param();
+			if (cr_type & (CR_CPU | CR_CORE | CR_SOCKET)) {
+				fatal("Invalid SelectTypeParameters for "
+				      "%s: %s (%u), it's can't contain "
+				      "CR_(CPU|CORE|SOCKET).",
+				      type,
+				      select_type_param_string(cr_type),
+				      cr_type);
+			}
+		}
+	}
+
 	xfree(type);
 	xfree(dir_array);
+
 	return retval;
 }
 
@@ -450,6 +447,28 @@ extern int select_get_plugin_id(void)
 		return 0;
 
 	return *(ops[select_context_default].plugin_id);
+}
+
+/* If the slurmctld is running a linear based select plugin return 1
+ * else 0. */
+extern int select_running_linear_based(void)
+{
+	int rc = 0;
+
+	if (slurm_select_init(0) < 0)
+		return 0;
+
+	switch (*(ops[select_context_default].plugin_id)) {
+	case 102: // select/linear
+	case 104: // select/alps -> linear
+	case 107: // select/cray -> linear
+		rc = 1;
+		break;
+	default:
+		rc = 0;
+		break;
+	}
+	return rc;
 }
 
 /*
@@ -1274,22 +1293,25 @@ extern int select_g_reconfigure (void)
  *	request. "best" is defined as either single set of consecutive nodes
  *	satisfying the request and leaving the minimum number of unused nodes
  *	OR the fewest number of consecutive node sets
- * IN/OUT avail_bitmap - nodes available for the reservation
+ * IN/OUT resv_desc_ptr - reservation request - select_jobinfo can be
+ *	updated in the plugin
  * IN node_cnt - count of required nodes
- * IN core_cnt - count of required cores per node
- * IN/OUT core_bitmap - cores which can not be used for this reservation
- * IN flags - reservation request flags
+ * IN/OUT avail_bitmap - nodes available for the reservation
+ * IN/OUT core_bitmap - cores which can not be used for this
+ *	reservation IN, and cores to be used in the reservation OUT
+ *	(flush bitstr then apply only used cores)
  * RET - nodes selected for use by the reservation
  */
-extern bitstr_t * select_g_resv_test(bitstr_t *avail_bitmap, uint32_t node_cnt,
-				     uint32_t *core_cnt, bitstr_t **core_bitmap,
-				     uint32_t flags)
+extern bitstr_t * select_g_resv_test(resv_desc_msg_t *resv_desc_ptr,
+				     uint32_t node_cnt,
+				     bitstr_t *avail_bitmap,
+				     bitstr_t **core_bitmap)
 {
 	if (slurm_select_init(0) < 0)
 		return NULL;
 
 	return (*(ops[select_context_default].resv_test))
-		(avail_bitmap, node_cnt, core_cnt, core_bitmap, flags);
+		(resv_desc_ptr, node_cnt, avail_bitmap, core_bitmap);
 }
 
 extern void select_g_ba_init(node_info_msg_t *node_info_ptr, bool sanity_check)
@@ -1335,4 +1357,19 @@ extern int *select_g_ba_get_dims(void)
 		plugin_id = select_context_default;
 
 	return (*(ops[plugin_id].ba_get_dims))();
+}
+
+extern bitstr_t *select_g_ba_cnodelist2bitmap(char *cnodelist)
+{
+	uint32_t plugin_id;
+
+	if (slurm_select_init(0) < 0)
+		return NULL;
+
+	if (working_cluster_rec)
+		plugin_id = working_cluster_rec->plugin_id_select;
+	else
+		plugin_id = select_context_default;
+
+	return (*(ops[plugin_id].ba_cnodelist2bitmap))(cnodelist);
 }

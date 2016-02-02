@@ -846,7 +846,10 @@ static void *_window_manager(void *arg)
 		if ((len == -1) && ((errno == EINTR) || (errno == EAGAIN)))
 			continue;
 		if (len < 4) {
-			error("read window size error: %m");
+			if (errno != SLURM_PROTOCOL_SOCKET_ZERO_BYTES_SENT) {
+				error("%s: read window size error: %m",
+				      __func__);
+			}
 			return NULL;
 		}
 		memcpy(&winsz.cols, buf, 2);
@@ -1011,6 +1014,7 @@ _init_task_stdio_fds(stepd_step_task_info_t *task, stepd_step_rec_t *job)
 	} else {
 		/* create pipe and eio object */
 		int pin[2];
+
 		debug5("  stdin uses an eio object");
 		if (pipe(pin) < 0) {
 			error("stdin pipe: %m");
@@ -1070,11 +1074,35 @@ _init_task_stdio_fds(stepd_step_task_info_t *task, stepd_step_rec_t *job)
 	} else {
 		/* create pipe and eio object */
 		int pout[2];
+#if HAVE_PTY_H
+		if (job->buffered_stdio) {
+#if HAVE_SETRESUID
+			if (setresuid(geteuid(), geteuid(), 0) < 0)
+				error("%s: %d setresuid() %m",
+				      __func__, geteuid());
+#endif
+			if (openpty(pout, pout + 1, NULL, NULL, NULL) < 0) {
+				error("%s: stdout openpty: %m", __func__);
+				return SLURM_ERROR;
+			}
+#if HAVE_SETRESUID
+			if (setresuid(0, getuid(), 0) < 0)
+				error("%s 0 setresuid() %m", __func__);
+#endif
+		} else {
+			debug5("  stdout uses an eio object");
+			if (pipe(pout) < 0) {
+				error("stdout pipe: %m");
+				return SLURM_ERROR;
+			}
+		}
+#else
 		debug5("  stdout uses an eio object");
 		if (pipe(pout) < 0) {
 			error("stdout pipe: %m");
 			return SLURM_ERROR;
 		}
+#endif
 		task->stdout_fd = pout[1];
 		fd_set_close_on_exec(task->stdout_fd);
 		task->from_stdout = pout[0];
@@ -1563,7 +1591,7 @@ io_initial_client_connect(srun_info_t *srun, stepd_step_rec_t *job,
 		debug4("connecting IO back to %s:%d", ip, ntohs(port));
 	}
 
-	if ((sock = (int) slurm_open_stream(&srun->ioaddr)) < 0) {
+	if ((sock = (int) slurm_open_stream(&srun->ioaddr, true)) < 0) {
 		error("connect io: %m");
 		/* XXX retry or silently fail?
 		 *     fail for now.
@@ -1623,7 +1651,7 @@ io_client_connect(srun_info_t *srun, stepd_step_rec_t *job)
 		debug4("connecting IO back to %s:%d", ip, ntohs(port));
 	}
 
-	if ((sock = (int) slurm_open_stream(&srun->ioaddr)) < 0) {
+	if ((sock = (int) slurm_open_stream(&srun->ioaddr, true)) < 0) {
 		error("connect io: %m");
 		/* XXX retry or silently fail?
 		 *     fail for now.
@@ -1788,53 +1816,25 @@ _task_build_message(struct task_read_info *out, stepd_step_rec_t *job, cbuf_t cb
 	struct io_buf *msg;
 	char *ptr;
 	Buf packbuf;
-	bool must_truncate = false;
-	int avail;
 	struct slurm_io_header header;
 	int n;
 
-	debug4("Entering _task_build_message");
+	debug4("%s: Entering...", __func__);
+
 	if (_outgoing_buf_free(job)) {
 		msg = list_dequeue(job->free_outgoing);
 	} else {
 		return NULL;
 	}
+
 	ptr = msg->data + io_hdr_packed_size();
-
-	if (job->buffered_stdio) {
-		avail = cbuf_peek_line(cbuf, ptr, MAX_MSG_LEN, 1);
-		if (avail >= MAX_MSG_LEN)
-			must_truncate = true;
-		else if (avail == 0 && cbuf_used(cbuf) >= MAX_MSG_LEN)
-			must_truncate = true;
-	}
-
-	debug5("  buffered_stdio is %s", job->buffered_stdio ? "true" : "false");
-	debug5("  must_truncate  is %s", must_truncate ? "true" : "false");
-
-	/*
-	 * If eof has been read from a tasks stdout or stderr, we need to
-	 * ignore normal line buffering and send the buffer immediately.
-	 * Hence the "|| out->eof".
-	 */
-	if (must_truncate || !job->buffered_stdio || out->eof) {
-		n = cbuf_read(cbuf, ptr, MAX_MSG_LEN);
-	} else {
-		n = cbuf_read_line(cbuf, ptr, MAX_MSG_LEN, -1);
-		if (n == 0) {
-			debug5("  partial line in buffer, ignoring");
-			debug4("Leaving  _task_build_message");
-			list_enqueue(job->free_outgoing, msg);
-			return NULL;
-		}
-	}
-
+	n = cbuf_read(cbuf, ptr, MAX_MSG_LEN);
 	header.type = out->type;
 	header.ltaskid = out->ltaskid;
 	header.gtaskid = out->gtaskid;
 	header.length = n;
 
-	debug5("  header.length = %d", n);
+	debug4("%s: header.length %d", __func__, n);
 	packbuf = create_buf(msg->data, io_hdr_packed_size());
 	if (!packbuf) {
 		fatal("Failure to allocate memory for a message header");
@@ -1848,7 +1848,7 @@ _task_build_message(struct task_read_info *out, stepd_step_rec_t *job, cbuf_t cb
 	packbuf->head = NULL;	/* CLANG false positive bug here */
 	free_buf(packbuf);
 
-	debug4("Leaving  _task_build_message");
+	debug4("%s: Leaving...", __func__);
 	return msg;
 }
 
@@ -1933,6 +1933,7 @@ _user_managed_io_connect(srun_info_t *srun, uint32_t gtid)
 	slurm_msg_t msg;
 
 	slurm_msg_t_init(&msg);
+	msg.protocol_version = srun->protocol_version;
 	msg.msg_type = TASK_USER_MANAGED_IO_STREAM;
 	msg.data = &user_io_msg;
 	user_io_msg.task_id = gtid;

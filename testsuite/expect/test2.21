@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Validate scontrol requeue of failed or completed job.
@@ -39,6 +39,12 @@ set exit_code          0
 
 print_header $test_id
 
+set min_age [get_min_job_age]
+if {$min_age < 10} {
+	send_user "\nWARNING: MinJobAge too low for this test ($min_age < 10)\n"
+	exit 0
+}
+
 # Remove any vestigial scripts
 exec $bin_rm -f $complete_script $fail_script
 
@@ -52,7 +58,7 @@ proc check_state { id } {
 	set job_state 0
 	spawn $scontrol show job $id
 	expect {
-		-re "JobState=PENDING" {
+		-re "JobState=(PENDING|RUNNING)" {
 			set job_state 1
 			exp_continue
 		}
@@ -66,7 +72,7 @@ proc check_state { id } {
 	}
 
 	if {$job_state != 1} {
-		send_user "\nFAILURE: Job $id state was not PENDING after it was requeued\n"
+		send_user "\nFAILURE: Job $id state was not PENDING or RUNNING after it was requeued\n"
 		set exit_code 1
 	}
 }
@@ -90,7 +96,7 @@ proc requeue_job { id } {
 #
 # Run a job that will complete
 #
-spawn $sbatch -N1 -o /dev/null -e /dev/null -t1 $complete_script
+spawn $sbatch -N1 -o /dev/null -e /dev/null -t1 --requeue $complete_script
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)
@@ -125,7 +131,7 @@ cancel_job $job_id
 # Run a job that will fail
 #
 set job_id 0
-spawn $sbatch -N1 -o /dev/null -e /dev/null -t 1 $fail_script
+spawn $sbatch -N1 -o /dev/null -e /dev/null -t 1 --requeue $fail_script
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id $expect_out(1,string)

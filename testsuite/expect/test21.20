@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          sacctmgr QoS modify test
@@ -35,19 +35,19 @@ source ./globals_accounting
 
 set test_id     "test21.20"
 set exit_code   0
-set tc1		slurm_test-cluster-1
-set tc2		slurm_test-cluster-2
-set tc3		slurm_test-cluster-3
-set ta1		slurm_test-account.1
-set ta2		slurm_test-account.2
-set ta3		slurm_test-account.3
+set tc1		"$test_id-cluster-1"
+set tc2		"$test_id-cluster-2"
+set tc3		"$test_id-cluster-3"
+set ta1		"$test_id-account.1"
+set ta2		"$test_id-account.2"
+set ta3		"$test_id-account.3"
 set qs		QosLevel
 set qs1		tnormal
 set qs2		texpedite
 set qs3		tstandby
-set tu1         slurm_test-user.1
-set tu2         slurm_test-user.2
-set tu3         slurm_test-user.3
+set tu1         "$test_id-user.1"
+set tu2         "$test_id-user.2"
+set tu3         "$test_id-user.3"
 set alo		Operator
 set access_err  0
 
@@ -59,9 +59,8 @@ array set acct_req {}
 set acct_req(cluster) $tc1,$tc2,$tc3
 
 # User
-array set user_req {
-	defaultaccount slurm_test-account.2
-}
+array set user_req {}
+set user_req(defaultaccount) $ta2
 set user_req(cluster) $tc1,$tc2,$tc3
 set user_req(account) $ta1,$ta2,$ta3
 set user_req(qos) $qs1,$qs2
@@ -103,7 +102,7 @@ if { [test_account_storage] == 0 } {
 }
 
 if { [string compare [check_accounting_admin_level] "Administrator"] } {
-	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\nUse sacctmgr mod user \$USER_NAME admin=admin.\n"
+	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin.\n"
 	exit 0
 }
 
@@ -128,7 +127,7 @@ if { $exit_code } {
 }
 
 #add qos
-incr exit_code [add_qos "$qs1,$qs2,$qs3"]
+incr exit_code [add_qos "$qs1,$qs2,$qs3" ""]
 if { $exit_code } {
 	remove_user "" "" "$tu1,$tu2,$tu3"
 	remove_acct "" "$ta1,$ta2,$ta3"
@@ -189,9 +188,9 @@ if {$matches != 27} {
 
 #modify user1 QoS
 
-# First array: information about user (ie. cluster,acount,partition...)
-# Second array: account inforamtion about user (ie. adminlevel, default account, ...)
-# Third array: assocoiation information about user (ie. fairshare, grpcpumins, grpcpu...)
+# First array: information about user (ie. cluster,account,partition...)
+# Second array: account information about user (ie. adminlevel, default account, ...)
+# Third array: association information about user (ie. fairshare, grpcpumins, grpcpu...)
 
 incr exit_code [mod_user $tu1 [array get user_mod_info] [array get user_mod_acct] [array get user_mod_assoc]]
 if { $exit_code } {
@@ -237,9 +236,9 @@ if {$matches != 21} {
 
 #modify user2 QoS
 
-# First array: information about user (ie. cluster,acount,partition...)
-# Second array: account inforamtion about user (ie. adminlevel, default account, ...)
-# Third array: assocoiation information about user (ie. fairshare, grpcpumins, grpcpu...)
+# First array: information about user (ie. cluster,account,partition...)
+# Second array: account information about user (ie. adminlevel, default account, ...)
+# Third array: association information about user (ie. fairshare, grpcpumins, grpcpu...)
 
 incr exit_code [mod_user $tu2 [array get user_mod_info2] [array get user_mod_acct2] [array get user_mod_assoc2]]
 
@@ -291,9 +290,9 @@ if {$matches != 15} {
 
 #modify user3 QoS
 
-# First array: information about user (ie. cluster,acount,partition...)
-# Second array: account inforamtion about user (ie. adminlevel, default account, ...)
-# Third array: assocoiation information about user (ie. fairshare, grpcpumins, grpcpu...)
+# First array: information about user (ie. cluster,account,partition...)
+# Second array: account information about user (ie. adminlevel, default account, ...)
+# Third array: association information about user (ie. fairshare, grpcpumins, grpcpu...)
 
 incr exit_code [mod_user $tu3 [array get user_mod_info3] [array get user_mod_acct3] [array get user_mod_assoc3]]
 

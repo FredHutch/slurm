@@ -21,12 +21,10 @@ get_mount_dir()
     local lssubsys=$(type -p lssubsys)
     if [[ $lssubsys ]]; then
         $lssubsys -m $subsystem | awk '{print $2}'
+    elif X=$(grep -si -m1 "^CgroupMountpoint=" @sysconfdir@/cgroup.conf); then
+        echo $X | sed "s/.*=\(.*\)/\1\/${subsystem}/"
     else
-        if [ -f @sysconfdir@/cgroup.conf ]; then
-            grep -i "^CgroupMountpoint=" @sysconfdir@/cgroup.conf | sed s/.*=// | head -n 1
-        else
-            echo "/cgroup/$subsystem"
-        fi
+        echo "/cgroup/$subsystem"
     fi
 }
 
@@ -69,15 +67,14 @@ then
     esac
 fi
 
+# try to extract the uid cgroup from the input one
+# ( extract /uid_% from /uid%/job_*...)
+uidcg=${rmcg%/job_*}
+
 # kernel call
 if [[ $# -eq 1 ]]
 then
 
-    rmcg=${mountdir}$@
-
-    # try to extract the uid cgroup from the input one
-    # ( extract /uid_% from /uid%/job_*...)
-    uidcg=${rmcg%/job_*}
     if [[ ${uidcg} == ${rmcg} ]]
     then
 	# not a slurm job pattern, perhaps the uidcg, just remove
@@ -97,10 +94,6 @@ then
 # that no one is manipulating the hierarchy, i.e. PAM, SLURM, ...)
 elif [[ $# -eq 2 ]] && [[ $1 == "sync" ]]
 then
-
-    shift
-    rmcg=${mountdir}$@
-    uidcg=${rmcg%/job_*}
 
     # remove this cgroup
     if [[ -d ${rmcg} ]]

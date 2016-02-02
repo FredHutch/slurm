@@ -1,6 +1,5 @@
 /*****************************************************************************\
  *  log.c - slurm logging facilities
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
@@ -78,14 +77,15 @@
 #include <sys/unistd.h>
 
 #include "slurm/slurm_errno.h"
-#include "src/common/log.h"
 #include "src/common/fd.h"
+#include "src/common/log.h"
 #include "src/common/macros.h"
 #include "src/common/safeopen.h"
+#include "src/common/slurm_protocol_api.h"
+#include "src/common/slurm_time.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
-#include "src/common/slurm_protocol_api.h"
 
 #ifndef LINEBUFSIZE
 #  define LINEBUFSIZE 256
@@ -135,7 +135,7 @@ typedef struct {
 	log_options_t opt;
 	unsigned initialized:1;
 	uint16_t fmt;            /* Flag for specifying timestamp format */
-	uint32_t debug_flags;
+	uint64_t debug_flags;
 }	log_t;
 
 char *slurm_prog_name = NULL;
@@ -188,7 +188,7 @@ static size_t _make_timestamp(char *timestamp_buf, size_t max,
 {
 	time_t timestamp_t = time(NULL);
 	struct tm timestamp_tm;
-	if (!localtime_r(&timestamp_t, &timestamp_tm)) {
+	if (!slurm_localtime_r(&timestamp_t, &timestamp_tm)) {
 		fprintf(stderr, "localtime_r() failed\n");
 		return 0;
 	}
@@ -568,7 +568,7 @@ int log_alter(log_options_t opt, log_facility_t fac, char *logfile)
  */
 void log_set_debug_flags(void)
 {
-	uint32_t debug_flags = slurm_get_debug_flags();
+	uint64_t debug_flags = slurm_get_debug_flags();
 
 	slurm_mutex_lock(&log_lock);
 	log->debug_flags = debug_flags;
@@ -678,7 +678,7 @@ set_idbuf(char *idbuf)
 
 	gettimeofday(&now, NULL);
 
-	sprintf(idbuf, "%.15s.%-6d %5d %p", ctime(&now.tv_sec) + 4,
+	sprintf(idbuf, "%.15s.%-6d %5d %p", slurm_ctime(&now.tv_sec) + 4,
 	        (int)now.tv_usec, (int)getpid(), (void *)pthread_self());
 
 }
@@ -919,12 +919,13 @@ static void
 _log_printf(log_t *log, cbuf_t cb, FILE *stream, const char *fmt, ...)
 {
 	va_list ap;
-	int fd = fileno(stream);
+	int fd = -1;
 
-	/* If the fd is less than 0 just return sense we can't do
-	   anything here.  This can happen if a calling program is the
-	   one that set up the io.
-	*/
+	/* If the fd is less than 0 just return since we can't do anything here.
+	 * This can happen if a calling program is the one that set up the io.
+	 */
+	if (stream)
+		fd = fileno(stream);
 	if (fd < 0)
 		return;
 

@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Test sbcast file overwrite (--force option).
@@ -61,7 +61,7 @@ if {[slurmd_user_root] == 0} {
 #
 # Delete left-over stdout/err files
 # Build input script file that broacasts a file
-# NOTE: we broadcast the file "sbcast", just for convenienc
+# NOTE: we broadcast the file "sbcast", just for convenience
 #
 set pid         [pid]
 set file1       "/tmp/test.$test_id.$pid.1"
@@ -113,7 +113,7 @@ if {$job_id == 0} {
 #
 if {[wait_for_job $job_id "DONE"] != 0} {
 	send_user "\nFAILURE: waiting for job to complete\n"
-	exec $scancel --quiet $job_id
+	cancel_job $job_id
 	set exit_code 1
 }
 

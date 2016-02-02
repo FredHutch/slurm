@@ -1,6 +1,5 @@
 /*****************************************************************************\
  *  checkpoint.c - implementation-independent checkpoint functions
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2004-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2009 Lawrence Livermore National Security.
@@ -131,7 +130,7 @@ checkpoint_init(char *type)
 	}
 	init_run = true;
 
-	verbose("Checkpoint plugin loaded: %s", type);
+	debug("Checkpoint plugin loaded: %s", type);
 done:
 	slurm_mutex_unlock(&context_lock);
 	return retval;

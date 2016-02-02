@@ -52,7 +52,7 @@
 #include <errno.h>
 #include <stdint.h>
 
-#if defined(__FreeBSD__)
+#if defined(__FreeBSD__) || defined(__NetBSD__)
 #define	SOL_TCP		IPPROTO_TCP
 #endif
 
@@ -81,10 +81,7 @@ static short _sock_bind_wild(int sockfd)
 	socklen_t len;
 	struct sockaddr_in sin;
 
-	memset(&sin, 0, sizeof(sin));
-	sin.sin_family = AF_INET;
-	sin.sin_addr.s_addr = htonl(INADDR_ANY);
-	sin.sin_port = htons(0);	/* bind ephemeral port */
+	slurm_setup_sockaddr(&sin, 0); /* bind ephemeral port */
 
 	if (bind(sockfd, (struct sockaddr *) &sin, sizeof(sin)) < 0)
 		return (-1);
@@ -101,7 +98,7 @@ static short _sock_bind_wild(int sockfd)
  * OUT fd - listening socket file descriptor number
  * OUT port - TCP port number in host byte order
  */
-int net_stream_listen(int *fd, short *port)
+int net_stream_listen(int *fd, uint16_t *port)
 {
 	int rc, val;
 
@@ -168,7 +165,7 @@ int readn(int fd, void *buf, size_t nbytes)
 	return(n);
 }
 
-int net_set_low_water(int sock, size_t size)
+int net_set_low_water(int sock, socklen_t size)
 {
 	if (setsockopt(sock, SOL_SOCKET, SO_RCVLOWAT,
 		       (const void *) &size, sizeof(size)) < 0) {
@@ -216,7 +213,7 @@ extern int net_set_keep_alive(int sock)
  * Removing this call might decrease the robustness of communications,
  * but will probably have no noticable effect.
  */
-#if ! defined(__FreeBSD__) || (__FreeBSD_version > 900000)
+#if !defined (__APPLE__) && (! defined(__FreeBSD__) || (__FreeBSD_version > 900000))
 	opt_int = keep_alive_time;
 	if (setsockopt(sock, SOL_TCP, TCP_KEEPIDLE, &opt_int, opt_len) < 0) {
 		error("Unable to set keep alive socket time: %m");
@@ -239,4 +236,39 @@ extern int net_set_keep_alive(int sock)
 #endif
 
 	return 0;
+}
+
+/* net_stream_listen_ports()
+ */
+int
+net_stream_listen_ports(int *fd, uint16_t *port, uint16_t *ports)
+{
+	int cc;
+	int val;
+
+	if ((*fd = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP)) < 0)
+		return -1;
+
+	val = 1;
+	cc = setsockopt(*fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(int));
+	if (cc < 0) {
+		close(*fd);
+		return -1;
+	}
+
+	cc = sock_bind_range(*fd, ports);
+	if (cc < 0) {
+		close(*fd);
+		return -1;
+	}
+	*port = cc;
+#undef SOMAXCONN
+#define SOMAXCONN	1024
+	cc = listen(*fd, NET_DEFAULT_BACKLOG);
+	if (cc < 0) {
+		close(*fd);
+		return -1;
+	}
+
+	return *fd;
 }

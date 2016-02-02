@@ -89,6 +89,7 @@ struct node_res_record {
 	uint16_t vpus;			/* count of virtual cpus (hyperthreads)
 					 * configured per core */
 	uint32_t real_memory;		/* MB of real memory configured */
+	uint32_t mem_spec_limit;	/* MB of specialized/system memory */
 };
 
 /* per-node resource usage record */
@@ -100,7 +101,7 @@ struct node_use_record {
 	uint16_t node_state;		/* see node_cr_state comments */
 };
 
-extern uint32_t select_debug_flags;
+extern uint64_t select_debug_flags;
 extern uint16_t select_fast_schedule;
 
 extern struct part_res_record *select_part_record;

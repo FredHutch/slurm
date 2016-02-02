@@ -1,4 +1,4 @@
-.TH SREPORT "1" "October 2010" "sreport 2.0" "Slurm components"
+.TH sreport "1" "Slurm Commands" "June 2015" "Slurm Commands"
 
 .SH "NAME"
 sreport \- Generate reports from the slurm accounting data.
@@ -8,7 +8,7 @@ sreport \- Generate reports from the slurm accounting data.
 
 .SH "DESCRIPTION"
 \fBsreport\fR is used to generate reports of job usage and cluster
-utilization for SLURM jobs saved to the SLURM Database,
+utilization for Slurm jobs saved to the Slurm Database,
 \fBslurmdbd\fR.
 
 .SH "OPTIONS"
@@ -19,6 +19,9 @@ Use all clusters instead of only the cluster from where the command was run.
 .TP
 \fB\-h\fR, \fB\-\-help\fR
 Print a help message describing the usage of \fBsreport\fR.
+.TP
+\fB\-M\fR, \fB\-\-cluster\fR
+The cluster(s) to generate reports for. Default is local cluster.
 .TP
 \fB\-n\fR, \fB\-\-noheader\fR
 Don't display header when listing results.
@@ -37,6 +40,12 @@ Specify the output time format. Time format options are case
 insensitive and may be abbreviated. The default format is Minutes.
 Supported time format options are listed in the \fBtime\fP command
 section below.
+.TP
+\fB\-T,  \-\-tres <tres_names>\fR
+Trackable resource (TRES) to report values for.
+By default CPU resource use is reported.
+Multiple TRES names may be separated using a comma separated list for all
+reports except the job reports, which can only support a single TRES name.
 .TP
 \fB\-v\fR, \fB\-\-verbose\fR
 Print detailed event logging.
@@ -129,6 +138,8 @@ Valid report types are:
 \fBcluster\fP \<REPORT\> \<OPTIONS\>
 
 \fBjob\fP \<REPORT\> \<OPTIONS\>
+
+\fBreservation\fP \<REPORT\> \<OPTIONS\>
 
 \fBuser\fP \<REPORT\> \<OPTIONS\>
 
@@ -360,19 +371,19 @@ AccountUtilizationByUser:
 .br
 UserUtilizationByAccount:
 .in 14
-Accounts, Cluster, CPUCount, Login, Proper, Used
+Accounts, Cluster, Login, Proper, TresCount, Used
 
 .in 10
 UserUtilizationByWckey:
 .br
 WCKeyUtilizationByUser:
 .in 14
-Cluster, CPUCount, Login, Proper, Used, Wckey
+Cluster, Login, Proper, TresCount, Used, Wckey
 
 .in 10
 Utilization:
 .in 14
-Allocated, Cluster, CPUCount, Down, Idle, Overcommited, PlannedDown, Reported, Reserved
+Allocated, Cluster, Down, Idle, Overcommited, PlannedDown, Reported, Reserved, TresCount, TresName
 
 .TP
 \fBFORMAT OPTIONS FOR JOB REPORTS\fP
@@ -391,7 +402,7 @@ Wckey, Cluster
 .in 10
 Utilization:
 .in 14
-Allocated, Associations, Cluster, CPUCount, CPUTime, End, Idle, Name, Nodes, Start, TotalTime
+Allocated, Associations, Cluster, End, Flags, Idle, Name, Nodes, ReservationId, Start, TotalTime, TresCount, TresName, TresTime
 
 .TP
 \fBFORMAT OPTIONS FOR USER REPORTS\fP
@@ -402,6 +413,18 @@ Account, Cluster, Login, Proper, Used
 
 .TP
 All commands and options are case-insensitive.
+
+.SH "ENVIRONMENT VARIABLES"
+.PP
+Some \fBsreport\fR options may be set via environment variables. These
+environment variables, along with their corresponding options, are listed below.
+(Note: commandline options will always override these settings)
+.TP 14
+\fBSREPORT_TRES\fR
+Same as \fB\-t, \-\-tres\fR
+.TP
+\fBSLURM_CONF\fR
+The location of the Slurm configuration file.
 
 .in 0
 .SH "EXAMPLES"
@@ -415,7 +438,7 @@ All commands and options are case-insensitive.
 \fBsreport job sizesbyaccount All_Clusters users=gore1 account=environ PrintJobCount\fP
 Report number of jobs by user gore1 within the environ account
 .TP
-\fBsreport cluster AccountUtilizationByUser cluster=zeus user=gore1 start=2/23/08 end=2/24/09 format=Accounts,Cluster,CPUCount,Login,Proper,Used\fP
+\fBsreport cluster AccountUtilizationByUser cluster=zeus user=gore1 start=2/23/08 end=2/24/09 format=Accounts,Cluster,TresCount,Login,Proper,Used\fP
 Report cluster account utilization with the specified fields during
 the specified 24 hour day of February 23, 2009, by user gore1
 .TP
@@ -430,17 +453,17 @@ Report top usage in percent of the lc account during the specified week
 Copyright (C) 2009\-2010 Lawrence Livermore National Security.
 Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
 .br
-Copyright (C) 2010\-2013 SchedMD LLC.
+Copyright (C) 2010\-2015 SchedMD LLC.
 .LP
-This file is part of SLURM, a resource management program.
+This file is part of Slurm, a resource management program.
 For details, see <http://slurm.schedmd.com/>.
 .LP
-SLURM is free software; you can redistribute it and/or modify it under
+Slurm is free software; you can redistribute it and/or modify it under
 the terms of the GNU General Public License as published by the Free
 Software Foundation; either version 2 of the License, or (at your option)
 any later version.
 .LP
-SLURM is distributed in the hope that it will be useful, but WITHOUT ANY
+Slurm is distributed in the hope that it will be useful, but WITHOUT ANY
 WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
 FOR A PARTICULAR PURPOSE.  See the GNU General Public License for more
 details.

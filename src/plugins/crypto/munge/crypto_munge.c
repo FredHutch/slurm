@@ -65,7 +65,7 @@
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
-#define RETRY_COUNT		10
+#define RETRY_COUNT		20
 #define RETRY_USEC		100000
 
 /*
@@ -90,16 +90,12 @@
  * only load authentication plugins if the plugin_type string has a prefix
  * of "auth/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the authentication API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]        = "Munge cryptographic signature plugin";
 const char plugin_type[]        = "crypto/munge";
-const uint32_t plugin_version   = 90;
-
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
 /*
  *  Error codes local to this plugin:
@@ -112,6 +108,28 @@ enum local_error_code {
 };
 
 static uid_t slurm_user = 0;
+
+/* Convert AuthInfo to a socket path. Parses input format "socket=<path>[,]".
+ * NOTE: Caller must xfree return value
+ */
+static char *_auth_opts_to_socket(void)
+{
+	char *socket = NULL, *sep, *tmp;
+	char *opts = slurm_get_auth_info();
+
+	if (opts) {
+		tmp = strstr(opts, "socket=");
+		if (tmp) {	/* New format */
+			socket = xstrdup(tmp + 7);
+			sep = strchr(socket, ',');
+			if (sep)
+				sep[0] = '\0';
+		}
+		xfree(opts);
+	}
+
+	return socket;
+}
 
 /*
  * init() is called when the plugin is loaded, before any other functions
@@ -145,11 +163,28 @@ crypto_read_private_key(const char *path)
 {
 	munge_ctx_t ctx;
 	munge_err_t err;
+	char *socket;
+	int auth_ttl, rc;
 
 	if ((ctx = munge_ctx_create()) == NULL) {
 		error ("crypto_read_private_key: munge_ctx_create failed");
 		return (NULL);
 	}
+
+	socket = _auth_opts_to_socket();
+	if (socket) {
+		rc = munge_ctx_set(ctx, MUNGE_OPT_SOCKET, socket);
+		xfree(socket);
+		if (rc != EMUNGE_SUCCESS) {
+			error("munge_ctx_set failure");
+			munge_ctx_destroy(ctx);
+			return NULL;
+		}
+	}
+
+	auth_ttl = slurm_get_auth_ttl();
+	if (auth_ttl)
+		(void) munge_ctx_set(ctx, MUNGE_OPT_TTL, auth_ttl);
 
 	/*
 	 *   Only allow slurmd_user (usually root) to decode job
@@ -174,12 +209,33 @@ crypto_read_private_key(const char *path)
 extern void *
 crypto_read_public_key(const char *path)
 {
+	munge_ctx_t ctx;
+	char *socket;
+	int auth_ttl, rc;
+
 	/*
 	 * Get slurm user id once. We use it later to verify credentials.
 	 */
 	slurm_user = slurm_get_slurm_user_id();
 
-	return (void *) munge_ctx_create();
+	ctx = munge_ctx_create();
+
+	socket = _auth_opts_to_socket();
+	if (socket) {
+		rc = munge_ctx_set(ctx, MUNGE_OPT_SOCKET, socket);
+		xfree(socket);
+		if (rc != EMUNGE_SUCCESS) {
+			error("munge_ctx_set failure");
+			munge_ctx_destroy(ctx);
+			return NULL;
+		}
+	}
+
+	auth_ttl = slurm_get_auth_ttl();
+	if (auth_ttl)
+		(void) munge_ctx_set(ctx, MUNGE_OPT_TTL, auth_ttl);
+
+	return (void *) ctx;
 }
 
 extern const char *
@@ -202,17 +258,14 @@ extern int
 crypto_sign(void * key, char *buffer, int buf_size, char **sig_pp,
 	    unsigned int *sig_size_p)
 {
-	int retry = RETRY_COUNT;
+	int retry = RETRY_COUNT, auth_ttl;
 	char *cred;
 	munge_err_t err;
 	munge_ctx_t ctx = (munge_ctx_t) key;
 
-#ifdef SLURM_MUNGE_TTL
-	/* Default munge credential lifetime is 5 minutes. Lower values can
-	 * improve performance of munged (less records to test for replay).
-	 * The value of SLURM_MUNGE_TTL should be in seconds. */
-	(void) munge_ctx_set(ctx, MUNGE_OPT_TTL, SLURM_MUNGE_TTL);
-#endif
+	auth_ttl = slurm_get_auth_ttl();
+	if (auth_ttl)
+		(void) munge_ctx_set(ctx, MUNGE_OPT_TTL, auth_ttl);
 
     again:
 	err = munge_encode(&cred, ctx, buffer, buf_size);

@@ -305,15 +305,16 @@ _server_read(eio_obj_t *obj, List objs)
 
 		n = io_hdr_read_fd(obj->fd, &s->header);
 		if (n <= 0) { /* got eof or error on socket read */
-
-			if (getenv("SLURM_PTY_PORT") == NULL)
-				error("\
-%s: fd %d got error or unexpected eof reading header",
-				      __func__, obj->fd);
-
-			if (s->cio->sls)
-				step_launch_notify_io_failure(s->cio->sls,
-							      s->node_id);
+			if (n < 0) { /* Error */
+				if (getenv("SLURM_PTY_PORT") == NULL) {
+					error("%s: fd %d error reading header: %m",
+					      __func__, obj->fd);
+				}
+				if (s->cio->sls) {
+					step_launch_notify_io_failure(
+						s->cio->sls, s->node_id);
+				}
+			}
 			close(obj->fd);
 			obj->fd = -1;
 			s->in_eof = true;
@@ -515,9 +516,9 @@ again:
 	 */
 	s->out_msg->ref_count--;
 	if (s->out_msg->ref_count == 0) {
-		pthread_mutex_lock(&s->cio->ioservers_lock);
+		slurm_mutex_lock(&s->cio->ioservers_lock);
 		list_enqueue(s->cio->free_incoming, s->out_msg);
-		pthread_mutex_unlock(&s->cio->ioservers_lock);
+		slurm_mutex_unlock(&s->cio->ioservers_lock);
 	} else
 		debug3("  Could not free msg!!");
 	s->out_msg = NULL;
@@ -673,12 +674,12 @@ static bool _file_readable(eio_obj_t *obj)
 		info->eof = true;
 		return false;
 	}
-	pthread_mutex_lock(&info->cio->ioservers_lock);
+	slurm_mutex_lock(&info->cio->ioservers_lock);
 	if (_incoming_buf_free(info->cio)) {
-		pthread_mutex_unlock(&info->cio->ioservers_lock);
+		slurm_mutex_unlock(&info->cio->ioservers_lock);
 		return true;
 	}
-	pthread_mutex_unlock(&info->cio->ioservers_lock);
+	slurm_mutex_unlock(&info->cio->ioservers_lock);
 
 	debug3("  false");
 	return false;
@@ -694,15 +695,15 @@ static int _file_read(eio_obj_t *obj, List objs)
 	int len;
 
 	debug2("Entering _file_read");
-	pthread_mutex_lock(&info->cio->ioservers_lock);
+	slurm_mutex_lock(&info->cio->ioservers_lock);
 	if (_incoming_buf_free(info->cio)) {
 		msg = list_dequeue(info->cio->free_incoming);
 	} else {
 		debug3("  List free_incoming is empty, no file read");
-		pthread_mutex_unlock(&info->cio->ioservers_lock);
+		slurm_mutex_unlock(&info->cio->ioservers_lock);
 		return SLURM_SUCCESS;
 	}
-	pthread_mutex_unlock(&info->cio->ioservers_lock);
+	slurm_mutex_unlock(&info->cio->ioservers_lock);
 
 	ptr = msg->data + io_hdr_packed_size();
 
@@ -713,9 +714,9 @@ again:
 			if ((errno == EAGAIN) || (errno == EWOULDBLOCK)) {
 				debug("_file_read returned %s",
 				      errno==EAGAIN?"EAGAIN":"EWOULDBLOCK");
-				pthread_mutex_lock(&info->cio->ioservers_lock);
+				slurm_mutex_lock(&info->cio->ioservers_lock);
 				list_enqueue(info->cio->free_incoming, msg);
-				pthread_mutex_unlock(&info->cio->ioservers_lock);
+				slurm_mutex_unlock(&info->cio->ioservers_lock);
 				return SLURM_SUCCESS;
 			}
 			/* Any other errors, we pretend we got eof */
@@ -856,7 +857,7 @@ _read_io_init_msg(int fd, client_io_t *cio, char *host)
 	cio->ioserver[msg.nodeid] = _create_server_eio_obj(fd, cio, msg.nodeid,
 							   msg.stdout_objs,
 							   msg.stderr_objs);
-	pthread_mutex_lock(&cio->ioservers_lock);
+	slurm_mutex_lock(&cio->ioservers_lock);
 	bit_set(cio->ioservers_ready_bits, msg.nodeid);
 	cio->ioservers_ready = bit_set_count(cio->ioservers_ready_bits);
 	/* Normally using eio_new_initial_obj while the eio mainloop
@@ -864,7 +865,7 @@ _read_io_init_msg(int fd, client_io_t *cio, char *host)
 	 * inside of the eio mainloop there should be no problem.
 	 */
 	eio_new_initial_obj(cio->eio, cio->ioserver[msg.nodeid]);
-	pthread_mutex_unlock(&cio->ioservers_lock);
+	slurm_mutex_unlock(&cio->ioservers_lock);
 
 	if (cio->sls)
 		step_launch_clear_questionable_state(cio->sls, msg.nodeid);
@@ -1089,6 +1090,8 @@ client_io_handler_create(slurm_step_io_fds_t fds,
 	int i;
 	uint32_t siglen;
 	char *sig;
+	uint16_t *ports;
+	uint16_t eio_timeout;
 
 	cio = (client_io_t *)xmalloc(sizeof(client_io_t));
 	if (cio == NULL)
@@ -1111,7 +1114,8 @@ client_io_handler_create(slurm_step_io_fds_t fds,
 	memcpy(cio->io_key, sig, siglen);
 	/* no need to free "sig", it is just a pointer into the credential */
 
-	cio->eio = eio_handle_create();
+	eio_timeout = slurm_get_srun_eio_timeout();
+	cio->eio = eio_handle_create(eio_timeout);
 
 	/* Compute number of listening sockets needed to allow
 	 * all of the slurmds to establish IO streams with srun, without
@@ -1124,15 +1128,23 @@ client_io_handler_create(slurm_step_io_fds_t fds,
 	cio->ioserver = (eio_obj_t **)xmalloc(num_nodes*sizeof(eio_obj_t *));
 	cio->ioservers_ready_bits = bit_alloc(num_nodes);
 	cio->ioservers_ready = 0;
-	pthread_mutex_init(&cio->ioservers_lock, NULL);
+	slurm_mutex_init(&cio->ioservers_lock);
 
 	_init_stdio_eio_objs(fds, cio);
+	ports = slurm_get_srun_port_range();
 
 	for (i = 0; i < cio->num_listen; i++) {
 		eio_obj_t *obj;
+		int cc;
 
-		if (net_stream_listen(&cio->listensock[i],
-				      (short *)&cio->listenport[i]) < 0) {
+		if (ports)
+			cc = net_stream_listen_ports(&cio->listensock[i],
+						     &cio->listenport[i],
+						     ports);
+		else
+			cc = net_stream_listen(&cio->listensock[i],
+					       &cio->listenport[i]);
+		if (cc < 0) {
 			fatal("unable to initialize stdio listen socket: %m");
 		}
 		debug("initialized stdio listening socket, port %d",
@@ -1223,7 +1235,10 @@ client_io_handler_finish(client_io_t *cio)
 		return SLURM_SUCCESS;
 
 	eio_signal_shutdown(cio->eio);
-	_delay_kill_thread(cio->ioid, 60);
+	/* Make the thread timeout consistent with
+	 * EIO_SHUTDOWN_WAIT
+	 */
+	_delay_kill_thread(cio->ioid, 180);
 	if (pthread_join(cio->ioid, NULL) < 0) {
 		error("Waiting for client io pthread: %m");
 		return SLURM_ERROR;
@@ -1263,7 +1278,7 @@ client_io_handler_downnodes(client_io_t *cio,
 	if (cio == NULL)
 		return;
 
-	pthread_mutex_lock(&cio->ioservers_lock);
+	slurm_mutex_lock(&cio->ioservers_lock);
 	for (i = 0; i < num_node_ids; i++) {
 		node_id = node_ids[i];
 		if (node_id >= cio->num_nodes || node_id < 0)
@@ -1282,7 +1297,7 @@ client_io_handler_downnodes(client_io_t *cio,
 				bit_set_count(cio->ioservers_ready_bits);
 		}
 	}
-	pthread_mutex_unlock(&cio->ioservers_lock);
+	slurm_mutex_unlock(&cio->ioservers_lock);
 
 	eio_signal_wakeup(cio->eio);
 }
@@ -1296,7 +1311,7 @@ client_io_handler_abort(client_io_t *cio)
 
 	if (cio == NULL)
 		return;
-	pthread_mutex_lock(&cio->ioservers_lock);
+	slurm_mutex_lock(&cio->ioservers_lock);
 	for (i = 0; i < cio->num_nodes; i++) {
 		if (!bit_test(cio->ioservers_ready_bits, i)) {
 			bit_set(cio->ioservers_ready_bits, i);
@@ -1312,7 +1327,7 @@ client_io_handler_abort(client_io_t *cio)
 			cio->ioserver[i]->shutdown = true;
 		}
 	}
-	pthread_mutex_unlock(&cio->ioservers_lock);
+	slurm_mutex_unlock(&cio->ioservers_lock);
 }
 
 
@@ -1324,9 +1339,8 @@ int client_io_handler_send_test_message(client_io_t *cio, int node_id,
 	Buf packbuf;
 	struct server_io_info *server;
 	int rc = SLURM_SUCCESS;
-	pthread_mutex_lock(&cio->ioservers_lock);
+	slurm_mutex_lock(&cio->ioservers_lock);
 
-	server = (struct server_io_info *)cio->ioserver[node_id]->arg;
 	if (sent_message)
 		*sent_message = false;
 
@@ -1338,6 +1352,7 @@ int client_io_handler_send_test_message(client_io_t *cio, int node_id,
 	if (cio->ioserver[node_id] == NULL) {
 		goto done;
 	}
+	server = (struct server_io_info *)cio->ioserver[node_id]->arg;
 
 	/* In this case, the I/O connection has closed so can't send a test
 	   message.  This error case is handled elsewhere. */
@@ -1380,6 +1395,6 @@ int client_io_handler_send_test_message(client_io_t *cio, int node_id,
 		goto done;
 	}
 done:
-	pthread_mutex_unlock(&cio->ioservers_lock);
+	slurm_mutex_unlock(&cio->ioservers_lock);
 	return rc;
 }

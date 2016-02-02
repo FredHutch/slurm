@@ -50,6 +50,7 @@
 #include <termios.h>
 
 #include "src/common/read_config.h"
+#include "src/common/slurm_time.h"
 #include "src/common/xstring.h"
 #include "src/squeue/squeue.h"
 
@@ -168,7 +169,8 @@ _get_window_width( void )
 static int
 _print_job ( bool clear_old )
 {
-	static job_info_msg_t * old_job_ptr = NULL, * new_job_ptr;
+	static job_info_msg_t *old_job_ptr;
+	job_info_msg_t *new_job_ptr;
 	int error_code;
 	uint16_t show_flags = 0;
 
@@ -222,11 +224,11 @@ _print_job ( bool clear_old )
 
 	if (params.verbose) {
 		printf ("last_update_time=%ld records=%u\n",
-		        (long) new_job_ptr->last_update,
+			(long) new_job_ptr->last_update,
 			new_job_ptr->record_count);
 	}
 
-	if (params.format == NULL) {
+	if (!params.format && !params.format_long) {
 		if (params.long_list) {
 			xstrcat(params.format,
 				"%.18i %.9P %.8j %.8u %.8T %.10M %.9l %.6D %R");
@@ -235,8 +237,13 @@ _print_job ( bool clear_old )
 				"%.18i %.9P %.8j %.8u %.2t %.10M %.6D %R");
 		}
 	}
-	if (params.format_list == NULL)
-		parse_format(params.format);
+
+	if (!params.format_list) {
+		if (params.format)
+			parse_format(params.format);
+		else if (params.format_long)
+			parse_long_format(params.format_long);
+	}
 
 	print_jobs_array(new_job_ptr->job_array, new_job_ptr->record_count,
 			 params.format_list) ;
@@ -269,10 +276,10 @@ _print_job_steps( bool clear_old )
 			error_code = SLURM_SUCCESS;
 			new_step_ptr = old_step_ptr;
 		}
-	}
-	else
+	} else {
 		error_code = slurm_get_job_steps((time_t) 0, NO_VAL, NO_VAL,
 						 &new_step_ptr, show_flags);
+	}
 	if (error_code) {
 		slurm_perror ("slurm_get_job_steps error");
 		return SLURM_ERROR;
@@ -281,14 +288,19 @@ _print_job_steps( bool clear_old )
 
 	if (params.verbose) {
 		printf ("last_update_time=%ld records=%u\n",
-		        (long) new_step_ptr->last_update,
+			(long) new_step_ptr->last_update,
 			new_step_ptr->job_step_count);
 	}
 
-	if (params.format == NULL)
+	if (!params.format && !params.format_long)
 		params.format = "%.15i %.8j %.9P %.8u %.9M %N";
-	if (params.format_list == NULL)
-		parse_format(params.format);
+
+	if (!params.format_list) {
+		if (params.format)
+			parse_format(params.format);
+		else if (params.format_long)
+			parse_long_format(params.format_long);
+	}
 
 	print_steps_array( new_step_ptr->job_steps,
 			   new_step_ptr->job_step_count,
@@ -303,5 +315,5 @@ _print_date( void )
 	time_t now;
 
 	now = time( NULL );
-	printf("%s", ctime( &now ));
+	printf("%s", slurm_ctime( &now ));
 }

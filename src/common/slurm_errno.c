@@ -108,7 +108,7 @@ static slurm_errtab_t slurm_errtab[] = {
 	{ SLURMCTLD_COMMUNICATIONS_SHUTDOWN_ERROR,
 	  "Unable to contact slurm controller (shutdown failure)"},
 
-	/* _info.c/communcation layer RESPONSE_SLURM_RC message codes */
+	/* _info.c/communication layer RESPONSE_SLURM_RC message codes */
 
 	{ SLURM_NO_CHANGE_IN_DATA,	/* Not really an error */
 	  "Data has not changed since time specified"		},
@@ -219,9 +219,9 @@ static slurm_errtab_t slurm_errtab[] = {
 	{ ESLURM_SAME_PARENT_ACCOUNT,
 	  "Account already child of parent account specified"   },
 	{ ESLURM_INVALID_QOS,
-	  "Job has invalid qos"					},
+	  "Invalid qos specification"				},
 	{ ESLURM_INVALID_WCKEY,
-	  "Job has invalid wckey"				},
+	  "Invalid wckey specification"				},
 	{ ESLURM_INVALID_LICENSES,
 	  "Invalid license specification"			},
 	{ ESLURM_NEED_RESTART,
@@ -261,7 +261,7 @@ static slurm_errtab_t slurm_errtab[] = {
 	{ ESLURM_QOS_PREEMPTION_LOOP,
 	  "QOS Preemption loop detected"                	},
 	{ ESLURM_NODE_NOT_AVAIL,
-	  "Required node not available (down or drained)"	},
+	  "Required node not available (down, drained or reserved)"},
 	{ ESLURM_INVALID_CPU_COUNT,
 	  "CPU count specification invalid"             	},
 	{ ESLURM_PARTITION_NOT_AVAIL,
@@ -304,6 +304,27 @@ static slurm_errtab_t slurm_errtab[] = {
 	  "Job is not finished"					},
 	{ ESLURM_TRIGGER_DUP,
 	  "Duplicate event trigger"				},
+	{ ESLURM_INTERNAL,
+	  "Slurm internal error, contact system administrator"	},
+	{ ESLURM_INVALID_BURST_BUFFER_CHANGE,
+	  "BurstBufferType change requires restart of slurmctld daemon "
+	  "to take effect"},
+	{ ESLURM_BURST_BUFFER_PERMISSION,
+	  "Burst Buffer permission denied"			},
+	{ ESLURM_BURST_BUFFER_LIMIT,
+	  "Burst Buffer resource limit exceeded"		},
+	{ ESLURM_INVALID_BURST_BUFFER_REQUEST,
+	  "Burst Buffer request invalid"			},
+	{ ESLURM_PRIO_RESET_FAIL,
+	  "Changes to job priority are not persistent, change nice instead" },
+	{ ESLURM_POWER_NOT_AVAIL,
+	  "Required power not available now"			},
+	{ ESLURM_POWER_RESERVED,
+	  "Required power at least partially reserved"		},
+	{ ESLURM_INVALID_POWERCAP,
+	  "Required powercap is not valid, check min/max values"},
+	{ ESLURM_INVALID_MCS_LABEL,
+	  "Invalid mcs_label specified"				},
 
 	/* slurmd error codes */
 	{ ESLRUMD_PIPE_ERROR_ON_TASK_SPAWN,
@@ -369,7 +390,7 @@ static slurm_errtab_t slurm_errtab[] = {
 	{ ESCRIPT_CHDIR_FAILED,
 	  "unable to change directory to work directory"	},
 	{ ESCRIPT_OPEN_OUTPUT_FAILED,
-	  "cound not open output file"			        },
+	  "could not open output file"			        },
 	{ ESCRIPT_NON_ZERO_RETURN,
 	  "Script terminated with non-zero exit code"		},
 
@@ -410,11 +431,13 @@ static slurm_errtab_t slurm_errtab[] = {
 	{ ESLURM_BAD_NAME,
 	  "Unacceptable name given. (No '.' in name allowed)"   },
 	{ ESLURM_OVER_ALLOCATE,
-	  "You can not allocate more than 100% of a resource"     },
+	  "You can not allocate more than 100% of a resource"	},
 
 	/* plugin and custom errors */
 	{ ESLURM_MISSING_TIME_LIMIT,
-	  "Time limit specification required, but not provided"  }
+	  "Time limit specification required, but not provided"	},
+	{ ESLURM_INVALID_KNL,
+	  "Invalid KNL configuration (MCDRAM or NUMA option)"	}
 };
 
 /*

@@ -88,6 +88,8 @@ void print_sinfo_reservation(reserve_info_msg_t *resv_ptr);
 	format_add_function(list,wid,right,suffix,_print_disk)
 #define format_add_features(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_features)
+#define format_add_features_act(list,wid,right,suffix) \
+	format_add_function(list,wid,right,suffix,_print_features_act)
 #define format_add_groups(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_groups)
 #define format_add_gres(list,wid,right,suffix) \
@@ -146,10 +148,14 @@ void print_sinfo_reservation(reserve_info_msg_t *resv_ptr);
 	format_add_function(list,wid,right,suffix,_print_com_invalid)
 #define format_add_cpu_load(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_cpu_load)
+#define format_add_free_mem(list,wid,right,suffix) \
+	format_add_function(list,wid,right,suffix,_print_free_mem)
 #define format_add_max_cpus_per_node(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_max_cpus_per_node)
 #define format_add_version(list,wid,right,suffix) \
 	format_add_function(list,wid,right,suffix,_print_version)
+#define format_add_alloc_mem(list,wid,right,suffix) \
+	format_add_function(list,wid,right,suffix,_print_alloc_mem)
 
 /*****************************************************************************
  * Print Field Functions
@@ -172,6 +178,8 @@ int _print_threads(sinfo_data_t * sinfo_data, int width,
 int _print_disk(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
 int _print_features(sinfo_data_t * sinfo_data, int width,
+			bool right_justify, char *suffix);
+int _print_features_act(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
 int _print_groups(sinfo_data_t * sinfo_data, int width,
 			bool right_justify, char *suffix);
@@ -231,8 +239,12 @@ int _print_com_invalid(sinfo_data_t * sinfo_data, int width,
 		       bool right_justify, char *suffix);
 int _print_cpu_load(sinfo_data_t * node_ptr, int width,
 		    bool right_justify, char *suffix);
+int _print_free_mem(sinfo_data_t * node_ptr, int width,
+		    bool right_justify, char *suffix);
 int _print_max_cpus_per_node(sinfo_data_t * sinfo_data, int width,
 			     bool right_justify, char *suffix);
 int _print_version(sinfo_data_t * sinfo_data, int width,
 		   bool right_justify, char *suffix);
+int _print_alloc_mem(sinfo_data_t * sinfo_data, int width,
+		     bool right_justify, char *suffix);
 #endif

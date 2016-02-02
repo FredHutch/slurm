@@ -84,6 +84,8 @@
 #define	bit_clear		slurm_bit_clear
 #define	bit_nclear		slurm_bit_nclear
 #define	bit_nset		slurm_bit_nset
+#define	bit_set_all		slurm_bit_set_all
+#define	bit_clear_all		slurm_bit_clear_all
 #define	bit_ffc			slurm_bit_ffc
 #define	bit_ffs			slurm_bit_ffs
 #define	bit_free		slurm_bit_free
@@ -238,6 +240,8 @@
 #define	unpack_time		slurm_unpack_time
 #define	packdouble		slurm_packdouble
 #define	unpackdouble		slurm_unpackdouble
+#define	packlongdouble		slurm_packlongdouble
+#define	unpacklongdouble	slurm_unpacklongdouble
 #define	pack64			slurm_pack64
 #define	unpack64		slurm_unpack64
 #define	pack32			slurm_pack32
@@ -387,13 +391,42 @@
 #define pack_slurm_step_layout          slurm_pack_slurm_step_layout
 #define unpack_slurm_step_layout        slurm_unpack_slurm_step_layout
 
+/* slurm_step_route.[ch] functions */
+#define route_split_hostlist_treewidth	slurm_route_split_hostlist_treewidth
+
+
+#define eio_handle_create		slurm_eio_handle_create
+#define eio_handle_destroy		slurm_eio_handle_destroy
+#define eio_handle_mainloop		slurm_eio_handle_mainloop
+#define eio_message_socket_accept	slurm_eio_message_socket_accept
+#define eio_message_socket_readable	slurm_eio_message_socket_readable
+#define eio_new_obj			slurm_eio_new_obj
+#define eio_new_initial_obj		slurm_eio_new_initial_obj
+#define eio_obj_create			slurm_eio_obj_create
+#define eio_obj_destroy			slurm_eio_obj_destroy
+#define eio_remove_obj			slurm_eio_remove_obj
+#define eio_signal_shutdown		slurm_eio_signal_shutdown
+#define eio_signal_wakeup		slurm_eio_signal_wakeup
+
+/* callerid.[ch] functions */
+#define callerid_get_own_netinfo	slurm_callerid_get_own_netinfo
+
+/* some stepd_api.[ch] functions */
+#define stepd_available			slurm_stepd_available
+#define stepd_connect			slurm_stepd_connect
+#define stepd_get_uid			slurm_stepd_get_uid
+#define stepd_add_extern_pid		slurm_stepd_add_extern_pid
+
+
 #endif /* USE_ALIAS */
 
 /* Include the function definitions after redefining their names. */
 #include "src/common/arg_desc.h"
 #include "src/common/bitstring.h"
+#include "src/common/callerid.h"
+#include "src/common/eio.h"
+#include "src/common/env.h"
 #include "src/common/hostlist.h"
-#include "src/common/slurm_jobacct_gather.h"
 #include "src/common/list.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
@@ -401,15 +434,17 @@
 #include "src/common/pack.h"
 #include "src/common/parse_config.h"
 #include "src/common/read_config.h"
-#include "src/common/env.h"
 #include "src/common/slurm_auth.h"
+#include "src/common/slurm_jobacct_gather.h"
+#include "src/common/slurm_route.h"
+#include "src/common/slurm_step_layout.h"
 #include "src/common/strlcpy.h"
+#include "src/common/stepd_api.h"
 #include "src/common/switch.h"
 #include "src/common/working_cluster.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
-#include "src/common/slurm_step_layout.h"
 
 #endif /*__SLURM_XLATOR_H__*/

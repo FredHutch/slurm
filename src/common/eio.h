@@ -69,7 +69,7 @@ struct eio_obj {
 	bool shutdown;
 };
 
-eio_handle_t *eio_handle_create(void);
+eio_handle_t *eio_handle_create(uint16_t);
 void eio_handle_destroy(eio_handle_t *eio);
 
 /*
@@ -86,6 +86,14 @@ void eio_new_initial_obj(eio_handle_t *eio, eio_obj_t *obj);
  * eio_handle_t "eio"'s internal object list.
  */
 void eio_new_obj(eio_handle_t *eio, eio_obj_t *obj);
+
+/*
+ * DeQueue an eio_obj_t "obj" from the running
+ * eio_handle_t eio's internal object list "objs".
+ * Supposed to be called from read/write handlers
+ * (have "objs" as one of their arguments).
+ */
+bool eio_remove_obj(eio_obj_t *obj, List objs);
 
 
 /* This routine will watch for activtiy on the fd's as long

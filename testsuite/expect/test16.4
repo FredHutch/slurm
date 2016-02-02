@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Basic sattach functionality test (--layout, --verbose, --label
@@ -153,7 +153,7 @@ expect {
 		exp_continue
 	}
 	timeout {
-		send_user \nFAILURE: sattach not responding\n"
+		send_user "\nFAILURE: sattach not responding\n"
 		set exit_code 1
 	}
 	eof {

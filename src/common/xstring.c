@@ -63,6 +63,7 @@
 #include "slurm/slurm_errno.h"
 
 #include "src/common/macros.h"
+#include "src/common/slurm_time.h"
 #include "src/common/strlcpy.h"
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
@@ -119,7 +120,8 @@ static void makespace(char **str, int needed)
 
 			xrealloc(*str, new_size);
 			actual_size = xsize(*str);
-			xassert(actual_size == new_size);
+			if (actual_size)
+				xassert(actual_size == new_size);
 		}
 	}
 }
@@ -211,7 +213,7 @@ void _xstrftimecat(char **buf, const char *fmt)
 	if (time(&t) == (time_t) -1)
 		fprintf(stderr, "time() failed\n");
 
-	if (!localtime_r(&t, &tm))
+	if (!slurm_localtime_r(&t, &tm))
 		fprintf(stderr, "localtime_r() failed\n");
 
 	strftime(p, sizeof(p), fmt, &tm);
@@ -232,7 +234,7 @@ void _xiso8601timecat(char **buf, bool msec)
 	if (gettimeofday(&tv, NULL) == -1)
 		fprintf(stderr, "gettimeofday() failed\n");
 
-	if (!localtime_r(&tv.tv_sec, &tm))
+	if (!slurm_localtime_r(&tv.tv_sec, &tm))
 		fprintf(stderr, "localtime_r() failed\n");
 
 	if (strftime(p, sizeof(p), "%Y-%m-%dT%T", &tm) == 0)
@@ -258,7 +260,7 @@ void _xrfc5424timecat(char **buf, bool msec)
 	if (gettimeofday(&tv, NULL) == -1)
 		fprintf(stderr, "gettimeofday() failed\n");
 
-	if (!localtime_r(&tv.tv_sec, &tm))
+	if (!slurm_localtime_r(&tv.tv_sec, &tm))
 		fprintf(stderr, "localtime_r() failed\n");
 
 	if (strftime(p, sizeof(p), "%Y-%m-%dT%T", &tm) == 0)
@@ -348,8 +350,8 @@ char * xbasename(char *path)
  */
 char * xstrdup(const char *str)
 {
-	size_t siz,
-	       rsiz;
+	size_t siz;
+	size_t rsiz;
 	char   *result;
 
 	if (str == NULL) {
@@ -359,8 +361,8 @@ char * xstrdup(const char *str)
 	result = (char *)xmalloc(siz);
 
 	rsiz = strlcpy(result, str, siz);
-
-	xassert(rsiz == siz-1);
+	if (rsiz)
+		xassert(rsiz == siz-1);
 
 	return result;
 }
@@ -430,17 +432,17 @@ long int xstrntol(const char *str, char **endptr, size_t n, int base)
  *   pattern (IN)	substring to look for in str
  *   replacement (IN)   string with which to replace the "pattern" string
  */
-void _xstrsubstitute(char **str, const char *pattern, const char *replacement)
+bool _xstrsubstitute(char **str, const char *pattern, const char *replacement)
 {
 	int pat_len, rep_len;
 	char *ptr, *end_copy;
 	int pat_offset;
 
 	if (*str == NULL || pattern == NULL || pattern[0] == '\0')
-		return;
+		return 0;
 
 	if ((ptr = strstr(*str, pattern)) == NULL)
-		return;
+		return 0;
 	pat_offset = ptr - (*str);
 	pat_len = strlen(pattern);
 	if (replacement == NULL)
@@ -455,6 +457,8 @@ void _xstrsubstitute(char **str, const char *pattern, const char *replacement)
 	}
 	strcpy((*str)+pat_offset+rep_len, end_copy);
 	xfree(end_copy);
+
+	return 1;
 }
 
 /*
@@ -516,9 +520,7 @@ char *xshort_hostname(void)
 		return NULL;
 
 	dot_ptr = strchr (path_name, '.');
-	if (dot_ptr == NULL)
-		dot_ptr = path_name + strlen(path_name);
-	else
+	if (dot_ptr != NULL)
 		dot_ptr[0] = '\0';
 
 	return xstrdup(path_name);
@@ -567,10 +569,26 @@ int xstrcmp(const char *s1, const char *s2)
 {
 	if (!s1 && !s2)
 		return 0;
-	else if ((s1 && !s2) || (!s1 && s2))
+	else if (!s1)
+		return -1;
+	else if (!s2)
 		return 1;
 	else
 		return strcmp(s1, s2);
+}
+
+
+/* safe strncmp */
+int xstrncmp(const char *s1, const char *s2, size_t n)
+{
+	if (!s1 && !s2)
+		return 0;
+	else if (!s1)
+		return -1;
+	else if (!s2)
+		return 1;
+	else
+		return strncmp(s1, s2, n);
 }
 
 /* safe strcasecmp */

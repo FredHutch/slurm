@@ -59,7 +59,7 @@ uint16_t ba_deny_pass = 0;
 ba_geo_combos_t geo_combos[LONGEST_BGQ_DIM_LEN];
 
 bool ba_initialized = false;
-uint32_t ba_debug_flags = 0;
+uint64_t ba_debug_flags = 0;
 int DIM_SIZE[HIGHEST_DIMENSIONS];
 bitstr_t *ba_main_mp_bitmap = NULL;
 pthread_mutex_t ba_system_mutex = PTHREAD_MUTEX_INITIALIZER;
@@ -73,16 +73,16 @@ static bool _check_deny_pass(int dim, uint16_t *deny_pass)
 		return true;
 
 	switch (dim) {
-	case A:
+	case 'A':
 		check = PASS_DENY_A;
 		break;
-	case X:
+	case 'X':
 		check = PASS_DENY_X;
 		break;
-	case Y:
+	case 'Y':
 		check = PASS_DENY_Y;
 		break;
-	case Z:
+	case 'Z':
 		check = PASS_DENY_Z;
 		break;
 	default:
@@ -211,6 +211,11 @@ static int _ba_node_map_set_range_internal(int level, uint16_t *coords,
 		return -1;
 
 	if (level < my_geo_system->dim_count) {
+
+		if (start_offset[level] > my_geo_system->dim_size[level]
+		    || end_offset[level] > my_geo_system->dim_size[level])
+			return -1;
+
 		for (coords[level] = start_offset[level];
 		     coords[level] <= end_offset[level];
 		     coords[level]++) {
@@ -598,7 +603,6 @@ extern void ba_init(node_info_msg_t *node_info_ptr, bool sanity_check)
 	int i, j, k;
 	slurm_conf_node_t **ptr_array;
 	int coords[HIGHEST_DIMENSIONS];
-	char *p = '\0';
 	int real_dims[HIGHEST_DIMENSIONS];
 	char dim_str[HIGHEST_DIMENSIONS+1];
 
@@ -652,7 +656,7 @@ extern void ba_init(node_info_msg_t *node_info_ptr, bool sanity_check)
 					numeric++;
 					continue;
 				}
-				number = xstrntol(numeric, &p, cluster_dims,
+				number = xstrntol(numeric, NULL, cluster_dims,
 						  cluster_base);
 				break;
 			}
@@ -1274,14 +1278,15 @@ extern void ba_node_map_set(bitstr_t *node_bitmap, uint16_t *full_offset,
  * IN end_offset - N-dimension zero-origin offset to start setting at
  * IN my_geo_system - system geometry specification
  */
-extern void ba_node_map_set_range(bitstr_t *node_bitmap,
-				  int *start_offset, int *end_offset,
-				  ba_geo_system_t *my_geo_system)
+extern int ba_node_map_set_range(bitstr_t *node_bitmap,
+				 int *start_offset, int *end_offset,
+				 ba_geo_system_t *my_geo_system)
 {
-	uint16_t coords[HIGHEST_DIMENSIONS];
+	uint16_t coords[HIGHEST_DIMENSIONS] = {};
 
-	_ba_node_map_set_range_internal(0, coords, start_offset, end_offset,
-					node_bitmap, my_geo_system);
+	return _ba_node_map_set_range_internal(
+		0, coords, start_offset, end_offset,
+		node_bitmap, my_geo_system);
 }
 
 /*
@@ -1487,8 +1492,15 @@ extern int ba_node_xlate_to_1d(uint16_t *full_offset,
 {
 	int i, map_offset;
 
-	xassert(full_offset);
-	xassert(my_geo_system);
+	if (full_offset == NULL) {
+		fatal("%s: full_offset is NULL", __func__);
+		return SLURM_ERROR;
+	}
+	if (my_geo_system == NULL) {
+		fatal("%s: my_geo_system is NULL", __func__);
+		return SLURM_ERROR;
+	}
+
 	i = my_geo_system->dim_count - 1;
 	map_offset = full_offset[i];
 	for (i-- ; i >= 0; i--) {
@@ -1647,7 +1659,7 @@ extern char *ba_switch_usage_str(uint16_t usage)
 	return "unknown";
 }
 
-extern void set_ba_debug_flags(uint32_t debug_flags)
+extern void set_ba_debug_flags(uint64_t debug_flags)
 {
 	ba_debug_flags = debug_flags;
 }

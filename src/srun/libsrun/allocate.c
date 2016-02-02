@@ -47,16 +47,17 @@
 #include <sys/types.h>
 #include <pwd.h>
 
+#include "src/common/env.h"
+#include "src/common/fd.h"
+#include "src/common/forward.h"
 #include "src/common/log.h"
 #include "src/common/macros.h"
 #include "src/common/slurm_auth.h"
 #include "src/common/slurm_protocol_api.h"
+#include "src/common/slurm_time.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
-#include "src/common/forward.h"
-#include "src/common/env.h"
-#include "src/common/fd.h"
 
 #include "allocate.h"
 #include "opt.h"
@@ -79,7 +80,7 @@ extern uint64_t job_getjid(pid_t pid);
 #define MAX_ALLOC_WAIT	60	/* seconds */
 #define MIN_ALLOC_WAIT	5	/* seconds */
 #define MAX_RETRIES	10
-#define POLL_SLEEP	3	/* retry interval in seconds  */
+#define POLL_SLEEP	0.1	/* retry interval in seconds  */
 
 pthread_mutex_t msg_lock = PTHREAD_MUTEX_INITIALIZER;
 pthread_cond_t msg_cond = PTHREAD_COND_INITIALIZER;
@@ -122,8 +123,8 @@ static void *_safe_signal_while_allocating(void *in_data)
 
 	destroy_job = 1;
 	if (pending_job_id != 0) {
+		info("Job allocation %u has been revoked", pending_job_id);
 		slurm_complete_job(pending_job_id, NO_VAL);
-		info("Job allocation %u has been revoked.", pending_job_id);
 	}
 
 	return NULL;
@@ -181,7 +182,7 @@ static void _timeout_handler(srun_timeout_msg_t *msg)
 	if (msg->timeout != last_timeout) {
 		last_timeout = msg->timeout;
 		verbose("job time limit to be reached at %s",
-			slurm_ctime(&msg->timeout));
+			slurm_ctime2(&msg->timeout));
 	}
 }
 
@@ -256,7 +257,8 @@ static int _wait_bluegene_block_ready(resource_allocation_response_msg_t *alloc)
 {
 	int is_ready = 0, i, rc;
 	char *block_id = NULL;
-	int cur_delay = 0;
+	double cur_delay = 0;
+	double cur_sleep = 0;
 	int max_delay = BG_FREE_PREVIOUS_BLOCK + BG_MIN_BLOCK_BOOT +
 		(BG_INCR_BLOCK_BOOT * alloc->node_cnt);
 
@@ -264,15 +266,17 @@ static int _wait_bluegene_block_ready(resource_allocation_response_msg_t *alloc)
 				    SELECT_JOBDATA_BLOCK_ID,
 				    &block_id);
 
-	for (i=0; (cur_delay < max_delay); i++) {
-		if (i == 1)
+	for (i = 0; cur_delay < max_delay; i++) {
+		cur_sleep = POLL_SLEEP * i;
+		if (i == 1) {
 			debug("Waiting for block %s to become ready for job",
 			      block_id);
+		}
 		if (i) {
-			sleep(POLL_SLEEP);
+			usleep(1000000 * cur_sleep);
 			rc = _blocks_dealloc();
 			if ((rc == 0) || (rc == -1))
-				cur_delay += POLL_SLEEP;
+				cur_delay += cur_sleep;
 			debug2("still waiting");
 		}
 
@@ -348,7 +352,8 @@ static int _blocks_dealloc(void)
 static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 {
 	int is_ready = 0, i, rc;
-	int cur_delay = 0;
+	double cur_delay = 0;
+	double cur_sleep = 0;
 	int suspend_time, resume_time, max_delay;
 
 	suspend_time = slurm_get_suspend_timeout();
@@ -360,14 +365,18 @@ static int _wait_nodes_ready(resource_allocation_response_msg_t *alloc)
 
 	pending_job_id = alloc->job_id;
 
-	for (i = 0; (cur_delay < max_delay); i++) {
+	for (i = 0; cur_delay < max_delay; i++) {
 		if (i) {
-			if (i == 1)
-				verbose("Waiting for nodes to boot");
-			else
-				debug("still waiting");
-			sleep(POLL_SLEEP);
-			cur_delay += POLL_SLEEP;
+			cur_sleep = POLL_SLEEP * i;
+			if (i == 1) {
+				verbose("Waiting for nodes to boot (delay looping %d times @ %f secs x index)",
+					max_delay, POLL_SLEEP);
+			} else {
+				debug("Waited %f sec and still waiting: next sleep for %f sec",
+				      cur_delay, cur_sleep);
+			}
+			usleep(1000000 * cur_sleep);
+			cur_delay += cur_sleep;
 		}
 
 		rc = slurm_job_node_ready(alloc->job_id);
@@ -589,6 +598,7 @@ slurmctld_msg_init(void)
 	slurm_addr_t slurm_address;
 	uint16_t port;
 	static slurm_fd_t slurmctld_fd   = (slurm_fd_t) 0;
+	uint16_t *ports;
 
 	if (slurmctld_fd)	/* May set early for queued job allocation */
 		return slurmctld_fd;
@@ -596,10 +606,16 @@ slurmctld_msg_init(void)
 	slurmctld_fd = -1;
 	slurmctld_comm_addr.port = 0;
 
-	if ((slurmctld_fd = slurm_init_msg_engine_port(0)) < 0) {
+	if ((ports = slurm_get_srun_port_range()))
+		slurmctld_fd = slurm_init_msg_engine_ports(ports);
+	else
+		slurmctld_fd = slurm_init_msg_engine_port(0);
+
+	if (slurmctld_fd < 0) {
 		error("slurm_init_msg_engine_port error %m");
 		exit(error_exit);
 	}
+
 	if (slurm_get_stream_addr(slurmctld_fd, &slurm_address) < 0) {
 		error("slurm_get_stream_addr error %m");
 		exit(error_exit);
@@ -649,7 +665,8 @@ job_desc_msg_create_from_opts (void)
 	if (opt.core_spec != (uint16_t) NO_VAL)
 		j->core_spec      = opt.core_spec;
 	j->features       = opt.constraints;
-	j->gres           = opt.gres;
+	if (opt.gres && strcasecmp(opt.gres, "NONE"))
+		j->gres   = opt.gres;
 	if (opt.immediate == 1)
 		j->immediate = opt.immediate;
 	if (opt.job_name)
@@ -681,7 +698,7 @@ job_desc_msg_create_from_opts (void)
 
 	}
 
-	if (opt.distribution == SLURM_DIST_ARBITRARY
+	if (((opt.distribution & SLURM_DIST_STATE_BASE) == SLURM_DIST_ARBITRARY)
 	   && !j->req_nodes) {
 		error("With Arbitrary distribution you need to "
 		      "specify a nodelist or hostfile with the -w option");
@@ -731,8 +748,12 @@ job_desc_msg_create_from_opts (void)
 
 	if (opt.mail_user)
 		j->mail_user = opt.mail_user;
+	if (opt.burst_buffer)
+		j->burst_buffer = opt.burst_buffer;
 	if (opt.begin)
 		j->begin_time = opt.begin;
+	if (opt.deadline)
+		j->deadline = opt.deadline;
 	if (opt.licenses)
 		j->licenses = opt.licenses;
 	if (opt.network)
@@ -811,12 +832,20 @@ job_desc_msg_create_from_opts (void)
 		j->time_limit          = opt.time_limit;
 	if (opt.time_min != NO_VAL)
 		j->time_min            = opt.time_min;
-	j->shared = opt.shared;
+	if (opt.shared != (uint16_t) NO_VAL)
+		j->shared = opt.shared;
 
 	if (opt.warn_signal)
 		j->warn_signal = opt.warn_signal;
 	if (opt.warn_time)
 		j->warn_time = opt.warn_time;
+
+	if (opt.cpu_freq_min != NO_VAL)
+		j->cpu_freq_min = opt.cpu_freq_min;
+	if (opt.cpu_freq_max != NO_VAL)
+		j->cpu_freq_max = opt.cpu_freq_max;
+	if (opt.cpu_freq_gov != NO_VAL)
+		j->cpu_freq_gov = opt.cpu_freq_gov;
 
 	if (opt.req_switch >= 0)
 		j->req_switch = opt.req_switch;
@@ -833,7 +862,12 @@ job_desc_msg_create_from_opts (void)
 		j->spank_job_env_size = opt.spank_job_env_size;
 	}
 
-	return (j);
+	if (opt.power_flags)
+		j->power_flags = opt.power_flags;
+	if (opt.mcs_label)
+		j->mcs_label = opt.mcs_label;
+
+	return j;
 }
 
 void

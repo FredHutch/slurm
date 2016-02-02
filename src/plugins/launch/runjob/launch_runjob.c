@@ -75,15 +75,12 @@
  * of how this plugin satisfies that application.  SLURM will only load
  * a task plugin if the plugin_type string has a prefix of "task/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as this API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]        = "launch runjob plugin";
 const char plugin_type[]        = "launch/runjob";
-const uint32_t plugin_version   = 101;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
 static srun_job_t *local_srun_job = NULL;
 
@@ -138,7 +135,8 @@ static void
 _handle_msg(slurm_msg_t *msg)
 {
 	static uint32_t slurm_uid = NO_VAL;
-	uid_t req_uid = g_slurm_auth_get_uid(msg->auth_cred, NULL);
+	uid_t req_uid = g_slurm_auth_get_uid(msg->auth_cred,
+					     slurm_get_auth_info());
 	uid_t uid = getuid();
 	job_step_kill_msg_t *ss;
 	srun_user_msg_t *um;
@@ -155,29 +153,24 @@ _handle_msg(slurm_msg_t *msg)
 	case SRUN_PING:
 		debug3("slurmctld ping received");
 		slurm_send_rc_msg(msg, SLURM_SUCCESS);
-		slurm_free_srun_ping_msg(msg->data);
 		break;
 	case SRUN_JOB_COMPLETE:
 		debug("received job step complete message");
 		runjob_signal(SIGKILL);
-		slurm_free_srun_job_complete_msg(msg->data);
 		break;
 	case SRUN_USER_MSG:
 		um = msg->data;
 		info("%s", um->msg);
-		slurm_free_srun_user_msg(msg->data);
 		break;
 	case SRUN_TIMEOUT:
 		debug("received job step timeout message");
 		_handle_timeout(msg->data);
-		slurm_free_srun_timeout_msg(msg->data);
 		break;
 	case SRUN_STEP_SIGNAL:
 		ss = msg->data;
 		debug("received step signal %u RPC", ss->signal);
 		if (ss->signal)
 			runjob_signal(ss->signal);
-		slurm_free_job_step_kill_msg(msg->data);
 		break;
 	default:
 		debug("received spurious message type: %u",
@@ -208,12 +201,12 @@ static void *_msg_thr_internal(void *arg)
 		if (slurm_receive_msg(newsockfd, msg, 0) != 0) {
 			error("slurm_receive_msg: %m");
 			/* close the new socket */
-			slurm_close_accepted_conn(newsockfd);
+			slurm_close(newsockfd);
 			continue;
 		}
 		_handle_msg(msg);
 		slurm_free_msg(msg);
-		slurm_close_accepted_conn(newsockfd);
+		slurm_close(newsockfd);
 	}
 	return NULL;
 }
@@ -260,6 +253,7 @@ extern int fini(void)
 
 extern int launch_p_setup_srun_opt(char **rest)
 {
+	int i;
 	int command_pos = 0;
 	uint32_t taskid = NO_VAL;
 
@@ -311,28 +305,21 @@ extern int launch_p_setup_srun_opt(char **rest)
 		}
 
 		if (opt.export_env) {
-			if (!strcasecmp(opt.export_env, "NONE")) {
-				/* represents the difference between --env-all
-				 * and --exp-env */
-				command_pos += 2;
-			} else {
-				error("--export= only accepts NONE as "
-				      "an option, ignoring '%s'.",
-				      opt.export_env);
-				xfree(opt.export_env);
+			for (i = 0; opt.export_env[i]; i++) {
+				if (opt.export_env[i] == ',')
+					command_pos++;
 			}
+			command_pos += 5;	/* baseline overhead */
 		}
-
-		opt.argc += command_pos;
 	}
 
 	/* We need to do +2 here just incase multi-prog is needed (we
-	   add an extra argv on so just make space for it).
-	*/
-	opt.argv = (char **) xmalloc((opt.argc + 2) * sizeof(char *));
+	 * add an extra argv on so just make space for it). */
+	opt.argv = (char **) xmalloc((opt.argc + command_pos + 2) *
+		   sizeof(char *));
 
 	if (!opt.test_only) {
-		int i = 0;
+		i = 0;
 		/* First arg has to be something when sending it to the
 		   runjob api.  This can be anything, we put runjob
 		   here so --launch-cmd looks nice :), but it doesn't matter.
@@ -390,10 +377,37 @@ extern int launch_p_setup_srun_opt(char **rest)
 			xfree(tmp);
 		}
 
-		if (opt.export_env && !strcasecmp(opt.export_env, "NONE")) {
+		if (opt.export_env) {
+			char *tmp_env, *tok, *save_ptr = NULL, *eq_ptr;
+			bool has_equal = false;
 			opt.argv[i++]  = xstrdup("--exp-env");
 			opt.argv[i++]  = xstrdup("SLURM_JOB_ID");
 			opt.argv[i++]  = xstrdup("SLURM_STEP_ID");
+			tmp_env = xstrdup(opt.export_env);
+			tok = strtok_r(tmp_env, ",", &save_ptr);
+			while (tok) {
+				if (!strcasecmp(tok, "NONE"))
+					break;
+				eq_ptr = strchr(tok, '=');
+				if (eq_ptr)
+					has_equal = true;
+				else
+					opt.argv[i++]  = xstrdup(tok);
+				tok = strtok_r(NULL, ",", &save_ptr);
+			}
+			xfree(tmp_env);
+			if (has_equal) {
+				opt.argv[i++]  = xstrdup("--envs");
+				tmp_env = xstrdup(opt.export_env);
+				tok = strtok_r(tmp_env, ",", &save_ptr);
+				while (tok) {
+					eq_ptr = strchr(tok, '=');
+					if (eq_ptr)
+						opt.argv[i++]  = xstrdup(tok);
+					tok = strtok_r(NULL, ",", &save_ptr);
+				}
+				xfree(tmp_env);
+			}
 		} else {
 			/* Export all the environment so the
 			 * runjob_mux will get the correct info about
@@ -405,13 +419,8 @@ extern int launch_p_setup_srun_opt(char **rest)
 		 * job, which in this case is exactly what it is.  So, very
 		 * sweet. */
 		opt.argv[i++] = xstrdup(":");
-
-		/* Sanity check to make sure we set it up correctly. */
-		if (i != command_pos) {
-			fatal ("command_pos is set to %d but we are going to "
-			       "put it at %d, please update src/srun/opt.c",
-			       command_pos, i);
-		}
+		command_pos = i;
+		opt.argc += command_pos;
 
 		/* Set default job name to the executable name rather than
 		 * "runjob" */

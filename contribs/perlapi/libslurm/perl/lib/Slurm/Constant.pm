@@ -6,6 +6,8 @@ use Carp;
 my %const;
 my $got = 0;
 
+no warnings 'portable';
+
 sub _get_constants {
     seek(DATA, 0, 0);
     local $/=''; # paragraph mode
@@ -88,7 +90,11 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =item * INFINITE           0xffffffff
 
+=item * INFINITE64         0xffffffffffffffff
+
 =item * NO_VAL             0xfffffffe
+
+=item * NO_VAL64           0xfffffffffffffffe
 
 =item * MAX_TASKS_PER_NODE 128
 
@@ -174,9 +180,17 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =over 2
 
-=item * NODE_STATE_BASE       0x00ff
+=item * NODE_STATE_BASE       0x000f
 
-=item * NODE_STATE_FLAGS      0xff00
+=item * NODE_STATE_FLAGS      0xfff0
+
+=item * NODE_STATE_NET        0x0010
+
+=item * NODE_STATE_RES        0x0020
+
+=item * NODE_STATE_UNDRAIN    0x0040
+
+=item * NODE_STATE_CLOUD      0x0080
 
 =item * NODE_RESUME           0x0100
 
@@ -481,7 +495,11 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =item * JOB_NODE_FAIL      7        
 
-=item * JOB_END            8        
+=item * JOB_PREEMPTED      8
+
+=item * JOB_BOOT_FAIL      9
+
+=item * JOB_END           10
 
 =back
 
@@ -745,6 +763,20 @@ This package export constants for use with Slurm. This includes enumerations and
 
 =back
 
+=head3 TRES Records
+
+=over 2
+
+=item * TRES_CPU                        1
+
+=item * TRES_MEM                        2
+
+=item * TRES_ENERGY                     3
+
+=item * TRES_NODE                       4
+
+=back
+
 =head3 Task distribution
 
 =over 2
@@ -936,7 +968,7 @@ head2 SLURM ERRNO
 
 =back
 
-=head3 _info.c/communcation layer RESPONSE_SLURM_RC message codes
+=head3 _info.c/communication layer RESPONSE_SLURM_RC message codes
 
 =over 2
 

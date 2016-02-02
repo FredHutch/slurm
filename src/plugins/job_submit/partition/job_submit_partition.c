@@ -66,6 +66,7 @@
 
 #include "slurm/slurm_errno.h"
 #include "src/common/slurm_xlator.h"
+#include "src/slurmctld/locks.h"
 #include "src/slurmctld/slurmctld.h"
 
 /*
@@ -90,14 +91,12 @@
  * only load authentication plugins if the plugin_type string has a prefix
  * of "auth/".
  *
- * plugin_version   - specifies the version number of the plugin.
- * min_plug_version - specifies the minumum version number of incoming
- *                    messages that this plugin can accept
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]       	= "Job submit partition plugin";
 const char plugin_type[]       	= "job_submit/partition";
-const uint32_t plugin_version   = 110;
-const uint32_t min_plug_version = 100;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
 /*****************************************************************************\
  * We've provided a simple example of the type of things you can do with this
@@ -131,6 +130,46 @@ static bool _user_access(uid_t run_uid, uint32_t submit_uid,
 	return false;		/* User not in AllowGroups */
 }
 
+static bool _valid_memory(struct part_record *part_ptr,
+			  struct job_descriptor *job_desc)
+{
+	uint32_t job_limit, part_limit;
+
+	if (!part_ptr->max_mem_per_cpu)
+		return true;
+
+	if (job_desc->pn_min_memory == NO_VAL)
+		return true;
+
+	if ((job_desc->pn_min_memory   & MEM_PER_CPU) &&
+	    (part_ptr->max_mem_per_cpu & MEM_PER_CPU)) {
+		/* Perform per CPU memory limit test */
+		job_limit  = job_desc->pn_min_memory   & (~MEM_PER_CPU);
+		part_limit = part_ptr->max_mem_per_cpu & (~MEM_PER_CPU);
+		if (job_desc->pn_min_cpus != (uint16_t) NO_VAL) {
+			job_limit  *= job_desc->pn_min_cpus;
+			part_limit *= job_desc->pn_min_cpus;
+		}
+	} else if (((job_desc->pn_min_memory   & MEM_PER_CPU) == 0) &&
+		   ((part_ptr->max_mem_per_cpu & MEM_PER_CPU) == 0)) {
+		/* Perform per node memory limit test */
+		job_limit  = job_desc->pn_min_memory;
+		part_limit = part_ptr->max_mem_per_cpu;
+	} else {
+		/* Can not compare per node to per CPU memory limits */
+		return true;
+	}
+
+	if (job_limit > part_limit) {
+		debug("job_submit/partition: skipping partition %s due to "
+		      "memory limit (%u > %u)",
+		      part_ptr->name, job_limit, part_limit);
+		return false;
+	}
+
+	return true;
+}
+
 /* This example code will set a job's default partition to the highest
  * priority partition that is available to this user. This is only an
  * example and tremendous flexibility is available. */
@@ -150,8 +189,13 @@ extern int job_submit(struct job_descriptor *job_desc, uint32_t submit_uid,
 			continue;	/* nobody can submit jobs here */
 		if (!_user_access(job_desc->user_id, submit_uid, part_ptr))
 			continue;	/* AllowGroups prevents use */
+
 		if (!top_prio_part ||
 		    (top_prio_part->priority < part_ptr->priority)) {
+			/* Test job specification elements here */
+			if (!_valid_memory(part_ptr, job_desc))
+				continue;
+
 			/* Found higher priority partition */
 			top_prio_part = part_ptr;
 		}

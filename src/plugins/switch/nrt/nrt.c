@@ -4,7 +4,7 @@
  *****************************************************************************
  *  Copyright (C) 2004-2007 The Regents of the University of California.
  *  Copyright (C) 2008 Lawrence Livermore National Security.
- *  Copyright (C) 2011-2012 SchedMD LLC.
+ *  Copyright (C) 2011-2014 SchedMD LLC.
  *  Original switch/federation plugin written by Jason King <jking@llnl.gov>
  *  Largely re-written for NRT support by Morris Jette <jette@schedmd.com>
  *
@@ -303,7 +303,6 @@ static int	_job_step_window_state(slurm_nrt_jobinfo_t *jp,
 				       hostlist_t hl, win_state_t state);
 static int	_load_min_window_id(char *adapter_name,
 				    nrt_adapter_t adapter_type);
-static void	_lock(void);
 static nrt_job_key_t _next_key(void);
 static int	_pack_libstate(slurm_nrt_libstate_t *lp, Buf buffer,
 			       uint16_t protocol_version);
@@ -311,13 +310,9 @@ static void	_pack_tableinfo(nrt_tableinfo_t *tableinfo, Buf buf,
 				slurm_nrt_jobinfo_t *jp,
 				uint16_t protocol_version);
 static char *	_state_str(win_state_t state);
-static int	_unload_window(char *adapter_name, nrt_adapter_t adapter_type,
-			       nrt_job_key_t job_key,
-			       nrt_window_id_t window_id, int retry);
 static int	_unload_window_all_jobs(char *adapter_name,
 					nrt_adapter_t adapter_type,
 					nrt_window_id_t window_id);
-static void	_unlock(void);
 static int	_unpack_libstate(slurm_nrt_libstate_t *lp, Buf buffer);
 static int	_unpack_nodeinfo(slurm_nrt_nodeinfo_t *n, Buf buf,
 				 bool believe_window_status,
@@ -335,29 +330,6 @@ static int	_wait_job(nrt_job_key_t job_key,preemption_state_t want_state,
 static char *	_win_state_str(win_state_t state);
 static int	_window_state_set(slurm_nrt_jobinfo_t *jp, char *hostname,
 				  win_state_t state);
-/* The _lock() and _unlock() functions are used to lock/unlock a
- * global mutex.  Used to serialize access to the global library
- * state variable nrt_state.
- */
-static void
-_lock(void)
-{
-	int err = 1;
-
-	while (err) {
-		err = pthread_mutex_lock(&global_lock);
-	}
-}
-
-static void
-_unlock(void)
-{
-	int err = 1;
-
-	while (err) {
-		err = pthread_mutex_unlock(&global_lock);
-	}
-}
 
 /* The lid caching functions were created to avoid unnecessary
  * function calls each time we need to load network tables on a node.
@@ -659,13 +631,13 @@ _job_step_window_state(slurm_nrt_jobinfo_t *jp, hostlist_t hl,
 		return SLURM_SUCCESS;
 
 	hi = hostlist_iterator_create(hl);
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	while ((host = hostlist_next(hi))) {
 		err = _window_state_set(jp, host, state);
 		rc = MAX(rc, err);
 		free(host);
 	}
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 	hostlist_iterator_destroy(hi);
 
 	return rc;
@@ -1932,10 +1904,10 @@ nrt_init(void)
 	slurm_nrt_libstate_t *tmp;
 
 	tmp = _alloc_libstate();
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	xassert(!nrt_state);
 	nrt_state = tmp;
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 
 	return SLURM_SUCCESS;
 }
@@ -2395,9 +2367,9 @@ nrt_build_nodeinfo(slurm_nrt_nodeinfo_t *n, char *name)
 	xassert(name);
 
 	strncpy(n->name, name, NRT_HOSTLEN);
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	err = _get_adapters(n);
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 
 	return err;
 }
@@ -2821,9 +2793,9 @@ nrt_unpack_nodeinfo(slurm_nrt_nodeinfo_t *n, Buf buf, uint16_t protocol_version)
 {
 	int rc;
 
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	rc = _unpack_nodeinfo(n, buf, false, protocol_version);
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 	return rc;
 }
 
@@ -2891,7 +2863,7 @@ nrt_job_step_complete(slurm_nrt_jobinfo_t *jp, hostlist_t hl)
 	hostlist_uniq(uniq_hl);
 	hi = hostlist_iterator_create(uniq_hl);
 
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	if (nrt_state != NULL) {
 		while ((node_name = hostlist_next(hi)) != NULL) {
 			_free_resources_by_job(jp, node_name);
@@ -2905,7 +2877,7 @@ nrt_job_step_complete(slurm_nrt_jobinfo_t *jp, hostlist_t hl)
 		 */
 		debug("nrt_job_step_complete called when nrt_state == NULL");
 	}
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 
 	hostlist_iterator_destroy(hi);
 	hostlist_destroy(uniq_hl);
@@ -2952,12 +2924,12 @@ _next_key(void)
 
 	xassert(nrt_state);
 
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	key = nrt_state->key_index;
 	if (key == 0)
 		key++;
 	nrt_state->key_index = (nrt_job_key_t) (key + 1);
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 
 	return key;
 }
@@ -3076,7 +3048,7 @@ nrt_build_jobinfo(slurm_nrt_jobinfo_t *jp, hostlist_t hl,
 	 */
 	hi = hostlist_iterator_create(hl);
 	host = hostlist_next(hi);
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	node = _find_node(nrt_state, host);
 	if (host != NULL)
 		free(host);
@@ -3128,7 +3100,7 @@ nrt_build_jobinfo(slurm_nrt_jobinfo_t *jp, hostlist_t hl,
 		jp->tables_per_task = 0;
 		info("switch/nrt: no adapter found for job");
 	}
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 	if (jp->tables_per_task == 0) {
 		hostlist_iterator_destroy(hi);
 		return SLURM_FAILURE;
@@ -3199,7 +3171,7 @@ nrt_build_jobinfo(slurm_nrt_jobinfo_t *jp, hostlist_t hl,
 	}
 
 	if (jp->tables_per_task) {
-		_lock();
+		slurm_mutex_lock(&global_lock);
 		for  (i = 0; i < nnodes; i++) {
 			host = hostlist_next(hi);
 			if (!host)
@@ -3224,13 +3196,13 @@ nrt_build_jobinfo(slurm_nrt_jobinfo_t *jp, hostlist_t hl,
 								instances, j);
 				}
 				if (rc != SLURM_SUCCESS) {
-					_unlock();
+					slurm_mutex_unlock(&global_lock);
 					goto fail;
 				}
 			}
 			free(host);
 		}
-		_unlock();
+		slurm_mutex_unlock(&global_lock);
 	}
 
 
@@ -3892,60 +3864,6 @@ nrt_load_table(slurm_nrt_jobinfo_t *jp, int uid, int pid, char *job_name)
 	return SLURM_SUCCESS;
 }
 
-/*
- * Try up to "retry" times to unload a window.
- */
-static int
-_unload_window(char *adapter_name, nrt_adapter_t adapter_type,
-	       nrt_job_key_t job_key, nrt_window_id_t window_id, int retry)
-{
-	int err, i;
-	nrt_cmd_clean_window_t  clean_window;
-	nrt_cmd_unload_window_t unload_window;
-
-	for (i = 0; i < retry; i++) {
-		if (i > 0) {
-			usleep(100000);
-		} else {
-			unload_window.adapter_name = adapter_name;
-			unload_window.adapter_type = adapter_type;
-			unload_window.job_key = job_key;
-			unload_window.window_id = window_id;
-		}
-		if (debug_flags & DEBUG_FLAG_SWITCH) {
-			info("nrt_cmd_wrap(unload_window, %s, %s, %u, %hu)",
-			      adapter_name, _adapter_type_str(adapter_type),
-			      job_key, window_id);
-		}
-
-		err = nrt_cmd_wrap(NRT_VERSION, NRT_CMD_UNLOAD_WINDOW,
-				   &unload_window);
-		if (err == NRT_SUCCESS)
-			return SLURM_SUCCESS;
-		debug("Unable to unload window for job_key %u, "
-		      "nrt_unload_window(%s, %s): %s",
-		      job_key, adapter_name, _adapter_type_str(adapter_type),
-		      nrt_err_str(err));
-
-		if (i == 0) {
-			clean_window.adapter_name = adapter_name;
-			clean_window.adapter_type = adapter_type;
-			clean_window.leave_inuse_or_kill = KILL;
-			clean_window.window_id = window_id;
-		}
-		err = nrt_cmd_wrap(NRT_VERSION, NRT_CMD_CLEAN_WINDOW,
-				   &clean_window);
-		if (err == NRT_SUCCESS)
-			return SLURM_SUCCESS;
-		error("Unable to clean window for job_key %u, "
-		      "nrt_clean_window(%s, %u): %s",
-		      job_key, adapter_name, adapter_type, nrt_err_str(err));
-		if (err != NRT_EAGAIN)
-			break;
-	}
-
-	return SLURM_FAILURE;
-}
 static int
 _unload_window_all_jobs(char *adapter_name, nrt_adapter_t adapter_type,
 			nrt_window_id_t window_id)
@@ -4017,59 +3935,6 @@ static int _unload_job_table(slurm_nrt_jobinfo_t *jp)
 	return rc;
 }
 
-static int _unload_job_windows(slurm_nrt_jobinfo_t *jp)
-{
-	nrt_window_id_t window_id = 0;
-	int err, i, j, rc = SLURM_SUCCESS;
-	int retry = 15;
-
-	if (!my_lpar_id_set && !my_network_id_set)
-		_get_my_id();
-
-	for (i = 0; i < jp->tables_per_task; i++) {
-		for (j = 0; j < jp->tableinfo[i].table_length; j++) {
-			if (jp->tableinfo[i].adapter_type == NRT_IB) {
-				nrt_ib_task_info_t *ib_tbl_ptr;
-				ib_tbl_ptr = (nrt_ib_task_info_t *)
-					     jp->tableinfo[i].table;
-				ib_tbl_ptr += j;
-				if (ib_tbl_ptr->node_number != my_network_id)
-					continue;
-				window_id = ib_tbl_ptr->win_id;
-			} else if (jp->tableinfo[i].adapter_type == NRT_HFI) {
-				nrt_hfi_task_info_t *hfi_tbl_ptr;
-				hfi_tbl_ptr = (nrt_hfi_task_info_t *)
-					      jp->tableinfo[i].table;
-				hfi_tbl_ptr += j;
-				if (hfi_tbl_ptr->lpar_id != my_lpar_id)
-					continue;
-				window_id = hfi_tbl_ptr->win_id;
-			} else if ((jp->tableinfo[i].adapter_type==NRT_HPCE) ||
-			           (jp->tableinfo[i].adapter_type==NRT_KMUX)) {
-				nrt_hpce_task_info_t *hpce_tbl_ptr;
-				hpce_tbl_ptr = (nrt_hpce_task_info_t *)
-					       jp->tableinfo[i].table;
-				hpce_tbl_ptr += j;
-				if (hpce_tbl_ptr->node_number != my_network_id)
-					continue;
-				window_id = hpce_tbl_ptr->win_id;
-			} else {
-				fatal("nrt_unload_window: invalid adapter "
-				      "type: %s",
-				      _adapter_type_str(jp->tableinfo[i].
-							adapter_type));
-			}
-			err = _unload_window(jp->tableinfo[i].adapter_name,
-					     jp->tableinfo[i].adapter_type,
-					     jp->job_key,
-					     window_id, retry);
-			if (err != NRT_SUCCESS)
-				rc = SLURM_ERROR;
-		}
-	}
-	return rc;
-}
-
 /* Assumes that, on error, new switch state information will be
  * read from node.
  *
@@ -4078,8 +3943,6 @@ static int _unload_job_windows(slurm_nrt_jobinfo_t *jp)
 extern int
 nrt_unload_table(slurm_nrt_jobinfo_t *jp)
 {
-	int rc = SLURM_SUCCESS;
-
 	if ((jp == NULL) || (jp->magic == NRT_NULL_MAGIC)) {
 		debug2("(%s: %d: %s) job->switch_job was NULL",
 		       THIS_FILE, __LINE__, __FUNCTION__);
@@ -4093,12 +3956,7 @@ nrt_unload_table(slurm_nrt_jobinfo_t *jp)
 		_print_jobinfo(jp);
 	}
 
-	if (jp->user_space)
-		rc = _unload_job_windows(jp);
-	else
-		rc = _unload_job_table(jp);
-
-	return rc;
+	return _unload_job_table(jp);
 }
 
 extern int
@@ -4156,7 +4014,7 @@ _pack_libstate(slurm_nrt_libstate_t *lp, Buf buffer, uint16_t protocol_version)
 extern void
 nrt_libstate_save(Buf buffer, bool free_flag)
 {
-	_lock();
+	slurm_mutex_lock(&global_lock);
 
 	if (nrt_state != NULL)
 		_pack_libstate(nrt_state, buffer, SLURM_PROTOCOL_VERSION);
@@ -4167,7 +4025,7 @@ nrt_libstate_save(Buf buffer, bool free_flag)
 		_free_libstate(nrt_state);
 		nrt_state = NULL;	/* freed above */
 	}
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 }
 
 /* Used by: slurmctld */
@@ -4183,12 +4041,9 @@ _unpack_libstate(slurm_nrt_libstate_t *lp, Buf buffer)
 	/* Validate state version */
 	safe_unpackstr_xmalloc(&ver_str, &ver_str_len, buffer);
 	debug3("Version string in job_state header is %s", ver_str);
-	if (ver_str) {
-		if (!strcmp(ver_str, NRT_STATE_VERSION))
-			safe_unpack16(&protocol_version, buffer);
-		else
-			protocol_version = SLURM_2_6_PROTOCOL_VERSION;
-	}
+	if (ver_str && !strcmp(ver_str, NRT_STATE_VERSION))
+		safe_unpack16(&protocol_version, buffer);
+
 	if (protocol_version == (uint16_t) NO_VAL) {
 		error("******************************************************");
 		error("Can not recover switch/nrt state, incompatible version");
@@ -4232,17 +4087,17 @@ nrt_libstate_restore(Buf buffer)
 {
 	int rc;
 
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	xassert(!nrt_state);
 
 	nrt_state = _alloc_libstate();
 	if (!nrt_state) {
 		error("nrt_libstate_restore nrt_state is NULL");
-		_unlock();
+		slurm_mutex_unlock(&global_lock);
 		return SLURM_FAILURE;
 	}
 	rc = _unpack_libstate(nrt_state, buffer);
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 
 	return rc;
 }
@@ -4261,10 +4116,10 @@ nrt_libstate_clear(void)
 	else
 		debug3("Clearing state on all windows in global NRT state");
 
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	if (!nrt_state || !nrt_state->node_list) {
 		error("nrt_state or node_list not initialized!");
-		_unlock();
+		slurm_mutex_unlock(&global_lock);
 		return SLURM_ERROR;
 	}
 
@@ -4284,7 +4139,7 @@ nrt_libstate_clear(void)
 			}
 		}
 	}
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 
 	return SLURM_SUCCESS;
 }
@@ -4596,7 +4451,7 @@ extern bool nrt_adapter_name_check(char *token, hostlist_t hl)
 	hi = hostlist_iterator_create(hl);
 	host = hostlist_next(hi);
 	hostlist_iterator_destroy(hi);
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	node = _find_node(nrt_state, host);
 	if (host)
 		free(host);
@@ -4608,7 +4463,7 @@ extern bool nrt_adapter_name_check(char *token, hostlist_t hl)
 			break;
 		}
 	}
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 
 	return name_found;
 }

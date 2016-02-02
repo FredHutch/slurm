@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Validate scontrol show commands for jobs and steps.
@@ -36,30 +36,42 @@ source ./globals
 set test_id     "2.8"
 set exit_code   0
 set file_in     "test$test_id.input"
+set is_bluegene 0
 set job_id1     0
 set job_id2     0
 
 print_header $test_id
+
+set select_type [test_select_type]
+if {![string compare $select_type "bluegene"]} {
+	set is_bluegene 1
+} elseif {![string compare $select_type "linear"]} {
+	set def_part_name [default_partition]
+	set nb_nodes [get_node_cnt_in_part $def_part_name]
+	if {$nb_nodes < 2} {
+		send_user "\nWARNING: This test is incompatible with select/linear and only one node\n"
+		exit $exit_code
+	}
+}
 
 if {[test_launch_poe]} {
 	set step_id 1
 } else {
 	set step_id 0
 }
-set is_bluegene [test_bluegene]
 
 #
 # Build input script file
 #
 make_bash_script $file_in "
-  $srun $bin_sleep 60 &
-  $srun $bin_sleep 60
+  $srun --mem=10 $bin_sleep 60 &
+  $srun --mem=10 $bin_sleep 60
 "
 
 #
 # Submit a couple jobs so we have something to work with
 #
-set sbatch_pid [spawn $sbatch --output=/dev/null --error=/dev/null -t5 $file_in]
+set sbatch_pid [spawn $sbatch --output=/dev/null --error=/dev/null -t5 --mem=20 $file_in]
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id1 $expect_out(1,string)
@@ -79,7 +91,7 @@ if {$job_id1 == 0} {
 	exit 1
 }
 
-set sbatch_pid [spawn $sbatch --output=/dev/null --error=/dev/null -t5 $file_in]
+set sbatch_pid [spawn $sbatch --output=/dev/null --error=/dev/null -t5 --mem=20 $file_in]
 expect {
 	-re "Submitted batch job ($number)" {
 		set job_id2 $expect_out(1,string)
@@ -171,8 +183,6 @@ expect {
 		wait
 	}
 }
-
-
 if {$matches != 2} {
 	send_user "\nFAILURE: scontrol failed to find matching job ($matches != 2)\n"
 	set exit_code 1
@@ -331,13 +341,9 @@ if {$matches != 1} {
 }
 
 #
-# Wait for job to start running then give the step a chance to start tasks
+# Wait for step to start
 #
-if {[wait_for_job $job_id1 RUNNING] != 0} {
-	send_user "\nFAILURE: waiting for job $job_id1 to run\n"
-	set exit_code 1
-}
-exec $bin_sleep 10
+sleep 10
 
 #
 # Look at all job steps with scontrol

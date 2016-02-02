@@ -45,10 +45,6 @@
 #include <pthread.h>
 #endif
 
-#ifdef HAVE_SYS_TERMIOS_H
-#  include <sys/termios.h>
-#endif
-
 #include <signal.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -96,7 +92,7 @@ int set_winsize(srun_job_t *job)
 	return 0;
 }
 
-/* SIGWINCH should already be blocked by srun/signal.c */
+/* SIGWINCH should already be blocked by srun/libsrun/srun_job.c */
 void block_sigwinch(void)
 {
 	xsignal_block(pty_sigarray);
@@ -178,5 +174,3 @@ static void *_pty_thread(void *arg)
 	}
 	return NULL;
 }
-
-

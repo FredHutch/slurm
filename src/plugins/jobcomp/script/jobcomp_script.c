@@ -123,16 +123,12 @@
  * only load job completion logging plugins if the plugin_type string has a
  * prefix of "jobcomp/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the job completion logging API
- * matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]       	= "Job completion logging script plugin";
 const char plugin_type[]       	= "jobcomp/script";
-const uint32_t plugin_version	= 100;
+const uint32_t plugin_version	= SLURM_VERSION_NUMBER;
 
 static char * script = NULL;
 static List comp_list = NULL;
@@ -178,6 +174,8 @@ static const char * _jobcomp_script_strerror (int errnum)
  */
 struct jobcomp_info {
 	uint32_t jobid;
+	uint32_t array_job_id;
+	uint32_t array_task_id;
 	uint32_t uid;
 	uint32_t gid;
 	uint32_t limit;
@@ -212,6 +210,8 @@ static struct jobcomp_info * _jobcomp_info_create (struct job_record *job)
 	j->uid = job->user_id;
 	j->gid = job->group_id;
 	j->name = xstrdup (job->name);
+	j->array_job_id = job->array_job_id;
+	j->array_task_id = job->array_task_id;
 
 	if (IS_JOB_RESIZING(job)) {
 		state = JOB_RESIZING;
@@ -383,6 +383,8 @@ static char ** _create_environment (struct jobcomp_info *job)
 	env[0] = NULL;
 
 	_env_append_fmt (&env, "JOBID", "%u",  job->jobid);
+	_env_append_fmt (&env, "ARRAYJOBID", "%u", job->array_job_id);
+	_env_append_fmt (&env, "ARRAYTASKID", "%u", job->array_task_id);
 	_env_append_fmt (&env, "UID",   "%u",  job->uid);
 	_env_append_fmt (&env, "GID",   "%u",  job->gid);
 	_env_append_fmt (&env, "START", "%ld", (long)job->start);
@@ -521,7 +523,7 @@ static void * _script_agent (void *args)
 	while (1) {
 		struct jobcomp_info *job;
 
-		pthread_mutex_lock(&comp_list_mutex);
+		slurm_mutex_lock(&comp_list_mutex);
 
 		if (list_is_empty(comp_list) && !agent_exit)
 			pthread_cond_wait(&comp_list_cond, &comp_list_mutex);
@@ -530,7 +532,7 @@ static void * _script_agent (void *args)
 		 * It is safe to unlock list mutex here. List has its
 		 *  own internal mutex that protects the comp_list itself
 		 */
-		pthread_mutex_unlock(&comp_list_mutex);
+		slurm_mutex_unlock(&comp_list_mutex);
 
 		if ((job = list_pop(comp_list))) {
 			_jobcomp_exec_child (script, job);
@@ -557,18 +559,18 @@ extern int init (void)
 
 	verbose("jobcomp/script plugin loaded init");
 
-	pthread_mutex_lock(&thread_flag_mutex);
+	slurm_mutex_lock(&thread_flag_mutex);
 
 	if (comp_list)
 		error("Creating duplicate comp_list, possible memory leak");
 	if (!(comp_list = list_create((ListDelF) _jobcomp_info_destroy))) {
-		pthread_mutex_unlock(&thread_flag_mutex);
+		slurm_mutex_unlock(&thread_flag_mutex);
 		return SLURM_ERROR;
 	}
 
 	if (script_thread) {
 		debug2( "Script thread already running, not starting another");
-		pthread_mutex_unlock(&thread_flag_mutex);
+		slurm_mutex_unlock(&thread_flag_mutex);
 		return SLURM_ERROR;
 	}
 
@@ -576,7 +578,7 @@ extern int init (void)
 	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
 	pthread_create(&script_thread, &attr, _script_agent, NULL);
 
-	pthread_mutex_unlock(&thread_flag_mutex);
+	slurm_mutex_unlock(&thread_flag_mutex);
 	slurm_attr_destroy(&attr);
 
 	return SLURM_SUCCESS;
@@ -608,10 +610,10 @@ int slurm_jobcomp_log_record (struct job_record *record)
 	if (!(job = _jobcomp_info_create (record)))
 		return error ("jobcomp/script: Failed to create job info!");
 
-	pthread_mutex_lock(&comp_list_mutex);
+	slurm_mutex_lock(&comp_list_mutex);
 	list_append(comp_list, job);
 	pthread_cond_broadcast(&comp_list_cond);
-	pthread_mutex_unlock(&comp_list_mutex);
+	slurm_mutex_unlock(&comp_list_mutex);
 
 	return SLURM_SUCCESS;
 }
@@ -648,21 +650,20 @@ extern int fini ( void )
 {
 	int rc = SLURM_SUCCESS;
 
-	pthread_mutex_lock(&thread_flag_mutex);
+	slurm_mutex_lock(&thread_flag_mutex);
 	if (script_thread) {
 		verbose("Script Job Completion plugin shutting down");
 		agent_exit = 1;
 		rc = _wait_for_thread(script_thread);
 		script_thread = 0;
 	}
-	pthread_mutex_unlock(&thread_flag_mutex);
+	slurm_mutex_unlock(&thread_flag_mutex);
 
 	xfree(script);
 	if (rc == SLURM_SUCCESS) {
-		pthread_mutex_lock(&comp_list_mutex);
-		list_destroy(comp_list);
-		comp_list = NULL;
-		pthread_mutex_unlock(&comp_list_mutex);
+		slurm_mutex_lock(&comp_list_mutex);
+		FREE_NULL_LIST(comp_list);
+		slurm_mutex_unlock(&comp_list_mutex);
 	}
 
 	return rc;

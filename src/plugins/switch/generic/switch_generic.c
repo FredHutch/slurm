@@ -120,44 +120,19 @@ typedef struct sw_gen_libstate {
  * of how this plugin satisfies that application.  SLURM will only load
  * a switch plugin if the plugin_type string has a prefix of "switch/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as this API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]        = "switch generic plugin";
 const char plugin_type[]        = "switch/generic";
-const uint32_t plugin_version   = 110;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
-uint32_t	debug_flags = 0;
+uint64_t debug_flags = 0;
 pthread_mutex_t	global_lock = PTHREAD_MUTEX_INITIALIZER;
 sw_gen_libstate_t *libstate = NULL;
 
 extern int switch_p_free_node_info(switch_node_info_t **switch_node);
 extern int switch_p_alloc_node_info(switch_node_info_t **switch_node);
-
-/* The _lock() and _unlock() functions are used to lock/unlock a
- * global mutex.  Used to serialize access to the global library
- * state variable nrt_state.
- */
-static void _lock(void)
-{
-	int err = 1;
-
-	while (err) {
-		err = pthread_mutex_lock(&global_lock);
-	}
-}
-
-static void _unlock(void)
-{
-	int err = 1;
-
-	while (err) {
-		err = pthread_mutex_unlock(&global_lock);
-	}
-}
 
 static void
 _alloc_libstate(void)
@@ -295,7 +270,7 @@ static void _cache_node_info(sw_gen_node_info_t *new_node_info)
 	struct sw_gen_node_info *next;
 	bool new_alloc;      /* True if this is new node to be added to cache */
 
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	old_node_info = _find_node(new_node_info->node_name);
 	new_alloc = (old_node_info == NULL);
 	if (new_alloc) {
@@ -317,7 +292,7 @@ static void _cache_node_info(sw_gen_node_info_t *new_node_info)
 
 	if (new_alloc)
 		_hash_add_nodeinfo(old_node_info);
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 }
 
 /*
@@ -326,16 +301,16 @@ static void _cache_node_info(sw_gen_node_info_t *new_node_info)
  */
 int init(void)
 {
-	verbose("%s loaded", plugin_name);
+	debug("%s loaded", plugin_name);
 	debug_flags = slurm_get_debug_flags();
 	return SLURM_SUCCESS;
 }
 
 int fini(void)
 {
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	_free_libstate();
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 	return SLURM_SUCCESS;
 }
 
@@ -361,9 +336,9 @@ int switch_p_libstate_restore(char * dir_name, bool recover)
 	if (debug_flags & DEBUG_FLAG_SWITCH)
 		info("switch_p_libstate_restore() starting");
 	/* No state saved or restored for this plugin, just initialize */
-	_lock();
+	slurm_mutex_lock(&global_lock);
 	_alloc_libstate();
-	_unlock();
+	slurm_mutex_unlock(&global_lock);
 
 	return SLURM_SUCCESS;
 }
@@ -763,10 +738,10 @@ extern int switch_p_get_jobinfo(switch_jobinfo_t *switch_job,
 			xrealloc(buf, bufsize);
 		}
 		s += snprintf(buf+s, bufsize-s, ",(%s,%s,%s)",
-					  ifa_ptr->ifa_name, ifa_ptr->ifa_family,
-					  ifa_ptr->ifa_addr);
+			      ifa_ptr->ifa_name, ifa_ptr->ifa_family,
+			      ifa_ptr->ifa_addr);
 	}
-	s += snprintf(buf+s, bufsize-s, ")");
+	snprintf(buf+s, bufsize-s, ")");
 
 	*(char **)resulting_data = buf; /* return x-alloc'ed data */
 
@@ -837,8 +812,6 @@ extern int switch_p_build_node_info(switch_node_info_t *switch_node)
 	gen_node_info->node_name = xstrdup(hostname);
 	if (getifaddrs(&if_array) == 0) {
 		for (if_rec = if_array; if_rec; if_rec = if_rec->ifa_next) {
-			if (!if_rec->ifa_addr->sa_data)
-				continue;
 #if !defined(__FreeBSD__)
 	   		if (if_rec->ifa_flags & IFF_LOOPBACK)
 				continue;

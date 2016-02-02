@@ -42,6 +42,7 @@
 #define __SREPORT_RESV_REPORTS_H
 
 #include "sreport.h"
+#include "src/common/proc_args.h"
 
 //extern int slurmdb_cluster_account_by_user(int argc, char *argv[]);
 //extern int cluster_user_by_account(int argc, char *argv[]);

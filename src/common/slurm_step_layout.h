@@ -1,8 +1,6 @@
 /*****************************************************************************\
  *  slurm_step_layout.c - function to distribute tasks over nodes.
- *  $Id: slurm.hp.elan.patch,v 1.1 2005/07/28 04:08:19 cholmes Exp $
  *****************************************************************************
- *
  *  Copyright (C) 2005 Hewlett-Packard Development Company, L.P.
  *  Written by Chris Holmes, <cholmes@hp.com>, who borrowed heavily
  *  from other parts of SLURM.
@@ -68,7 +66,7 @@ extern slurm_step_layout_t *slurm_step_layout_create(const char *tlist,
 						     uint32_t node_cnt,
 						     uint32_t task_cnt,
 						     uint16_t cpus_per_task,
-						     uint16_t task_dist,
+						     uint32_t task_dist,
 						     uint16_t plane_size);
 
 /*

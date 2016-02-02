@@ -24,7 +24,7 @@ AC_DEFUN([X_AC_BLCR], [
   AC_ARG_WITH(
     [blcr],
     AS_HELP_STRING(--with-blcr=PATH,Specify path to BLCR installation),
-    [_x_ac_blcr_dirs="$withval $_x_ac_blcr_dirs"])
+    [_x_ac_blcr_dirs="$withval"])
 
   AC_CACHE_CHECK(
     [for blcr installation],
@@ -40,7 +40,7 @@ AC_DEFUN([X_AC_BLCR], [
  	  _x_ac_blcr_libs_save="$LIBS"
 	  LIBS="-L$d/$bit -lcr $LIBS"
 	  AC_LINK_IFELSE(
-	    [AC_LANG_CALL([], cr_init)],
+	    [AC_LANG_CALL([], cr_get_restart_info)],
 	    AS_VAR_SET(x_ac_cv_blcr_dir, $d))
 	  LIBS="$_x_ac_blcr_libs_save"
 	  test -n "$x_ac_cv_blcr_dir" && break

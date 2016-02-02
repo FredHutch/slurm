@@ -35,10 +35,7 @@
 
 #include <stdlib.h>
 #include <fcntl.h>
-
-#if defined(__FreeBSD__)
 #include <signal.h>
-#endif
 
 #include "launch.h"
 
@@ -164,7 +161,7 @@ extern int launch_common_create_job_step(srun_job_t *job, bool use_all_cpus,
 {
 	int i, rc;
 	unsigned long step_wait = 0, my_sleep = 0;
-	time_t begin_time;
+	uint16_t base_dist;
 
 	if (!job) {
 		error("launch_common_create_job_step: no job given");
@@ -210,16 +207,24 @@ extern int launch_common_create_job_step(srun_job_t *job, bool use_all_cpus,
 	else
 		job->ctx_params.gres = getenv("SLURM_STEP_GRES");
 
-	if (use_all_cpus)
-		job->ctx_params.cpu_count = job->cpu_count;
-	else if (opt.overcommit)
-		job->ctx_params.cpu_count = job->ctx_params.min_nodes;
-	else if (opt.cpus_set)
+	if (opt.overcommit) {
+		if (use_all_cpus)	/* job allocation created by srun */
+			job->ctx_params.cpu_count = job->cpu_count;
+		else
+			job->ctx_params.cpu_count = job->ctx_params.min_nodes;
+	} else if (opt.cpus_set) {
 		job->ctx_params.cpu_count = opt.ntasks * opt.cpus_per_task;
-	else
+	} else if (opt.ntasks_set) {
 		job->ctx_params.cpu_count = opt.ntasks;
+	} else if (use_all_cpus) {	/* job allocation created by srun */
+		job->ctx_params.cpu_count = job->cpu_count;
+	} else {
+		job->ctx_params.cpu_count = opt.ntasks;
+	}
 
-	job->ctx_params.cpu_freq = opt.cpu_freq;
+	job->ctx_params.cpu_freq_min = opt.cpu_freq_min;
+	job->ctx_params.cpu_freq_max = opt.cpu_freq_max;
+	job->ctx_params.cpu_freq_gov = opt.cpu_freq_gov;
 	job->ctx_params.relative = (uint16_t)opt.relative;
 	job->ctx_params.ckpt_interval = (uint16_t)opt.ckpt_interval;
 	job->ctx_params.ckpt_dir = opt.ckpt_dir;
@@ -231,8 +236,18 @@ extern int launch_common_create_job_step(srun_job_t *job, bool use_all_cpus,
 	job->ctx_params.verbose_level = (uint16_t)_verbose;
 	if (opt.resv_port_cnt != NO_VAL)
 		job->ctx_params.resv_port_cnt = (uint16_t) opt.resv_port_cnt;
+	else {
+#if defined(HAVE_NATIVE_CRAY)
+		/*
+		 * On Cray systems default to reserving one port, or one
+		 * more than the number of multi prog commands, for Cray PMI
+		 */
+		job->ctx_params.resv_port_cnt = (opt.multi_prog ?
+						 opt.multi_prog_cmds + 1 : 1);
+#endif
+	}
 
-	switch (opt.distribution) {
+	switch (opt.distribution & SLURM_DIST_NODESOCKMASK) {
 	case SLURM_DIST_BLOCK:
 	case SLURM_DIST_ARBITRARY:
 	case SLURM_DIST_CYCLIC:
@@ -243,16 +258,28 @@ extern int launch_common_create_job_step(srun_job_t *job, bool use_all_cpus,
 	case SLURM_DIST_CYCLIC_CFULL:
 	case SLURM_DIST_BLOCK_CFULL:
 		job->ctx_params.task_dist = opt.distribution;
+		if (opt.ntasks_per_node != NO_VAL)
+			job->ctx_params.plane_size = opt.ntasks_per_node;
 		break;
 	case SLURM_DIST_PLANE:
 		job->ctx_params.task_dist = SLURM_DIST_PLANE;
 		job->ctx_params.plane_size = opt.plane_size;
 		break;
 	default:
-		job->ctx_params.task_dist = (job->ctx_params.task_count <=
-					     job->ctx_params.min_nodes)
-			? SLURM_DIST_CYCLIC : SLURM_DIST_BLOCK;
-		opt.distribution = job->ctx_params.task_dist;
+		/* Leave distribution set to unknown if taskcount <= nodes and
+		 * memory is set to 0. step_mgr will handle the 0mem case.
+		 * ex. SallocDefaultCommand=srun -n1 -N1 --mem=0 ... */
+		if (!opt.mem_per_cpu || !opt.pn_min_memory)
+			base_dist = SLURM_DIST_UNKNOWN;
+		else
+			base_dist = (job->ctx_params.task_count <=
+				     job->ctx_params.min_nodes)
+				     ? SLURM_DIST_CYCLIC : SLURM_DIST_BLOCK;
+		opt.distribution &= SLURM_DIST_STATE_FLAGS;
+		opt.distribution |= base_dist;
+		job->ctx_params.task_dist = opt.distribution;
+		if (opt.ntasks_per_node != NO_VAL)
+			job->ctx_params.plane_size = opt.ntasks_per_node;
 		break;
 
 	}
@@ -274,19 +301,21 @@ extern int launch_common_create_job_step(srun_job_t *job, bool use_all_cpus,
 	debug("cpus %u, tasks %u, name %s, relative %u",
 	      job->ctx_params.cpu_count, job->ctx_params.task_count,
 	      job->ctx_params.name, job->ctx_params.relative);
-	begin_time = time(NULL);
 
 	for (i=0; (!(*destroy_job)); i++) {
-		bool blocking_step_create = true;
 		if (opt.no_alloc) {
 			job->step_ctx = slurm_step_ctx_create_no_alloc(
 				&job->ctx_params, job->stepid);
-		} else if (opt.immediate) {
-			job->step_ctx = slurm_step_ctx_create(
-				&job->ctx_params);
 		} else {
-			/* Wait 60 to 70 seconds for response */
-			step_wait = (getpid() % 10) * 1000 + 60000;
+			if (opt.immediate)
+				step_wait = MAX(1, opt.immediate -
+						   difftime(time(NULL),
+							    srun_begin_time)) *
+					    1000;
+			else
+				/* Wait 60 to 70 seconds for response */
+				step_wait = (getpid() % 10) * 1000 + 60000;
+
 			job->step_ctx = slurm_step_ctx_create_timeout(
 						&job->ctx_params, step_wait);
 		}
@@ -300,7 +329,8 @@ extern int launch_common_create_job_step(srun_job_t *job, bool use_all_cpus,
 
 		if (((opt.immediate != 0) &&
 		     ((opt.immediate == 1) ||
-		      (difftime(time(NULL), begin_time) > opt.immediate))) ||
+		      (difftime(time(NULL), srun_begin_time) >=
+		       opt.immediate))) ||
 		    ((rc != ESLURM_NODES_BUSY) && (rc != ESLURM_PORTS_BUSY) &&
 		     (rc != ESLURM_PROLOG_RUNNING) &&
 		     (rc != SLURM_PROTOCOL_SOCKET_IMPL_TIMEOUT) &&
@@ -309,8 +339,6 @@ extern int launch_common_create_job_step(srun_job_t *job, bool use_all_cpus,
 			error ("Unable to create job step: %m");
 			return SLURM_ERROR;
 		}
-		if (rc == ESLURM_DISABLED)	/* job suspended */
-			blocking_step_create = false;
 
 		if (i == 0) {
 			if (rc == ESLURM_PROLOG_RUNNING) {
@@ -324,18 +352,16 @@ extern int launch_common_create_job_step(srun_job_t *job, bool use_all_cpus,
 			xsignal_unblock(sig_array);
 			for (i = 0; sig_array[i]; i++)
 				xsignal(sig_array[i], signal_function);
-			if (!blocking_step_create)
-				my_sleep = (getpid() % 1000) * 100 + 100000;
+			my_sleep = (getpid() % 1000) * 100 + 100000;
 		} else {
 			verbose("Job step creation still disabled, retrying");
-			if (!blocking_step_create)
-				my_sleep *= 2;
+			my_sleep *= 2;
 		}
-		if (!blocking_step_create) {
-			/* sleep 0.1 to 29 secs with exponential back-off */
-			my_sleep = MIN(my_sleep, 29000000);
-			usleep(my_sleep);
-		}
+
+		/* sleep 0.1 to 2 secs with exponential back-off */
+		my_sleep = MIN(my_sleep, 2000000);
+		usleep(my_sleep);
+
 		if (*destroy_job) {
 			/* cancelled by signal */
 			break;

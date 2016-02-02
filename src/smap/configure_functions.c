@@ -68,12 +68,12 @@ static int	_remove_allocation(char *com, List allocated_blocks);
 static int	_resolve(char *com);
 static int	_save_allocation(char *com, List allocated_blocks);
 static int      _set_layout(char *com);
-static int      _set_base_part_cnt(char *com);
+static int      _set_midplane_cnode_cnt(char *com);
 static int      _set_nodecard_cnt(char *com);
 
 int color_count = 0;
 char error_string[255];
-int base_part_node_cnt = 512;
+int midplane_cnode_cnt = 512;
 int nodecard_node_cnt = 32;
 char *layout_mode = "STATIC";
 
@@ -109,7 +109,7 @@ static void _destroy_allocated_block(void *object)
 			_set_nodes(allocated_block->nodes, 0, '.');
 			bg_configure_remove_block(
 				allocated_block->nodes, is_small);
-			list_destroy(allocated_block->nodes);
+			FREE_NULL_LIST(allocated_block->nodes);
 		}
 		destroy_select_ba_request(allocated_block->request);
 		xfree(allocated_block);
@@ -118,7 +118,7 @@ static void _destroy_allocated_block(void *object)
 
 static allocated_block_t *_make_request(select_ba_request_t *request)
 {
-	List results = list_create(NULL);
+	List results;
 	allocated_block_t *allocated_block = NULL;
 
 #ifdef HAVE_BGQ
@@ -148,8 +148,7 @@ static allocated_block_t *_make_request(select_ba_request_t *request)
 		results = NULL;
 	}
 
-	if (results)
-		list_destroy(results);
+	FREE_NULL_LIST(results);
 	return allocated_block;
 
 }
@@ -264,7 +263,7 @@ static int _set_layout(char *com)
 	return 1;
 }
 
-static int _set_base_part_cnt(char *com)
+static int _set_midplane_cnode_cnt(char *com)
 {
 	int i;
 
@@ -278,10 +277,10 @@ static int _set_base_part_cnt(char *com)
 		return 0;
 	}
 
-	base_part_node_cnt = atoi(&com[i]);
+	midplane_cnode_cnt = atoi(&com[i]);
 	memset(error_string, 0, 255);
 	sprintf(error_string,
-		"BasePartitionNodeCnt set to %d\n", base_part_node_cnt);
+		"MidplaneNodeCnt set to %d\n", midplane_cnode_cnt);
 
 	return 1;
 }
@@ -937,8 +936,8 @@ static int _save_allocation(char *com, List allocated_blocks)
 
 		xstrcat(save_string, "BridgeAPIVerbose=2\n");
 
-		xstrfmtcat(save_string, "BasePartitionNodeCnt=%d\n",
-			   base_part_node_cnt);
+		xstrfmtcat(save_string, "MidPlaneNodeCnt=%d\n",
+			   midplane_cnode_cnt);
 		xstrfmtcat(save_string, "NodeCardNodeCnt=%d\n",
 			   nodecard_node_cnt);
 		if (!list_count(allocated_blocks))
@@ -1036,6 +1035,9 @@ static int _add_bg_record(select_ba_request_t *blockreq, List allocated_blocks)
 	memset(tmp_char, 0, sizeof(tmp_char));
 	memset(tmp_char2, 0, sizeof(tmp_char2));
 
+	start[0] = end[0] = (int16_t)-1; /* Set this here just so Clang won't
+					  * report false postive.
+					  */
 	for (i = 0; i < params.cluster_dims; i++) {
 		best_start[0] = 0;
 		blockreq->geometry[i] = 0;
@@ -1479,8 +1481,7 @@ void get_command(void)
 
 		if (!strcmp(com, "exit")) {
 			endwin();
-			if (allocated_blocks)
-				list_destroy(allocated_blocks);
+			FREE_NULL_LIST(allocated_blocks);
 			bg_configure_ba_fini();
 			exit(0);
 		}
@@ -1490,8 +1491,9 @@ void get_command(void)
 			break;
 		} else if (!strncasecmp(com, "layout", 6)) {
 			_set_layout(com);
-		} else if (!strncasecmp(com, "basepartition", 13)) {
-			_set_base_part_cnt(com);
+		} else if (!strncasecmp(com, "midplane", 8) ||
+			   !strncasecmp(com, "basepartition", 13)) {
+			_set_midplane_cnode_cnt(com);
 		} else if (!strncasecmp(com, "nodecard", 8)) {
 			_set_nodecard_cnt(com);
 		} else if (!strncasecmp(com, "resolve", 7) ||
@@ -1540,8 +1542,7 @@ void get_command(void)
 			exit(1);
 		}
 	}
-	if (allocated_blocks)
-		list_destroy(allocated_blocks);
+	FREE_NULL_LIST(allocated_blocks);
 	params.display = 0;
 	noecho();
 

@@ -101,17 +101,17 @@ typedef struct allocation_info {
 
 static int shepard_fd = -1;
 static pthread_t signal_thread = (pthread_t) 0;
+static int pty_sigarray[] = { SIGWINCH, 0 };
 
 /*
  * Prototypes:
  */
-static inline int _estimate_nports(int nclients, int cli_per_port);
-static int        _compute_task_count(allocation_info_t *info);
 static void       _set_ntasks(allocation_info_t *info);
 static srun_job_t *_job_create_structure(allocation_info_t *info);
 static char *     _normalize_hostlist(const char *hostlist);
 static int _become_user(void);
-static int _call_spank_local_user(srun_job_t *job);
+static void _call_spank_fini(void);
+static int  _call_spank_local_user(srun_job_t *job);
 static void _default_sigaction(int sig);
 static long _diff_tv_str(struct timeval *tv1, struct timeval *tv2);
 static void _handle_intr(srun_job_t *job);
@@ -327,11 +327,13 @@ job_step_create_allocation(resource_allocation_response_msg_t *resp)
 	/* get the correct number of hosts to run tasks on */
 	if (opt.nodelist)
 		step_nodelist = opt.nodelist;
-	else if ((opt.distribution == SLURM_DIST_ARBITRARY) && (count == 0))
+	else if (((opt.distribution & SLURM_DIST_STATE_BASE) ==
+		  SLURM_DIST_ARBITRARY) && (count == 0))
 		step_nodelist = getenv("SLURM_ARBITRARY_NODELIST");
 	if (step_nodelist) {
 		hl = hostlist_create(step_nodelist);
-		if (opt.distribution != SLURM_DIST_ARBITRARY)
+		if ((opt.distribution & SLURM_DIST_STATE_BASE) !=
+		    SLURM_DIST_ARBITRARY)
 			hostlist_uniq(hl);
 		if (!hostlist_count(hl)) {
 			error("Hostlist is now nothing!  Can not run job.");
@@ -352,9 +354,9 @@ job_step_create_allocation(resource_allocation_response_msg_t *resp)
 		opt.nodelist = buf;
 	}
 
-	if ((opt.distribution == SLURM_DIST_ARBITRARY) &&
-	    (count != opt.ntasks)) {
-		error("You asked for %d tasks but specified %d nodes",
+	if (((opt.distribution & SLURM_DIST_STATE_BASE) == SLURM_DIST_ARBITRARY)
+	    && (count != opt.ntasks)) {
+		error("You asked for %d tasks but hostlist specified %d nodes",
 		      opt.ntasks, count);
 		goto error;
 	}
@@ -402,6 +404,11 @@ job_create_allocation(resource_allocation_response_msg_t *resp)
 	i->select_jobinfo = select_g_select_jobinfo_copy(resp->select_jobinfo);
 
 	job = _job_create_structure(i);
+	if (job) {
+		job->account = xstrdup(resp->account);
+		job->qos = xstrdup(resp->qos);
+		job->resv_name = xstrdup(resp->resv_name);
+	}
 
 	xfree(i->nodelist);
 	xfree(i);
@@ -414,11 +421,12 @@ extern void init_srun(int ac, char **av,
 		      bool handle_signals)
 {
 	/* This must happen before we spawn any threads
-	 * which are not designed to handle them */
+	 * which are not designed to handle arbitrary signals */
 	if (handle_signals) {
 		if (xsignal_block(sig_array) < 0)
 			error("Unable to block signals");
 	}
+	xsignal_block(pty_sigarray);
 
 	/* Initialize plugin stack, read options from plugins, etc.
 	 */
@@ -430,7 +438,7 @@ extern void init_srun(int ac, char **av,
 
 	/* Be sure to call spank_fini when srun exits.
 	 */
-	if (atexit((void (*) (void)) spank_fini) < 0)
+	if (atexit(_call_spank_fini) < 0)
 		error("Failed to register atexit handler for plugins: %m");
 
 	/* set default options, process commandline arguments, and
@@ -468,6 +476,9 @@ extern void init_srun(int ac, char **av,
 
 	/* Set up slurmctld message handler */
 	slurmctld_msg_init();
+
+	/* save process startup time to be used with -I<timeout> */
+	srun_begin_time = time(NULL);
 }
 
 extern void create_srun_job(srun_job_t **p_job, bool *got_alloc,
@@ -525,9 +536,16 @@ extern void create_srun_job(srun_job_t **p_job, bool *got_alloc,
 		}
 #ifdef HAVE_NATIVE_CRAY
 		if (opt.network) {
-			error("Ignoring --network value for a job step "
-			      "within an existing job. Set network options "
-			      "at job allocation time.");
+			if (opt.network_set_env)
+				debug2("Ignoring SLURM_NETWORK value for a "
+				       "job step within an existing job. "
+				       "Using what was set at job "
+				       "allocation time.  Most likely this "
+				       "variable was set by sbatch or salloc.");
+			else
+				error("Ignoring --network value for a job step "
+				      "within an existing job. Set network "
+				      "options at job allocation time.");
 		}
 #endif
 		if (opt.alloc_nodelist == NULL)
@@ -661,7 +679,7 @@ extern void fini_srun(srun_job_t *job, bool got_alloc, uint32_t *global_rc,
 	if (got_alloc) {
 		cleanup_allocation();
 
-		/* send the controller we were cancelled */
+		/* Tell slurmctld that we were cancelled */
 		if (job->state >= SRUN_JOB_CANCELLED)
 			slurm_complete_job(job->jobid, NO_VAL);
 		else
@@ -683,6 +701,8 @@ cleanup:
 
 	if (WIFEXITED(*global_rc))
 		*global_rc = WEXITSTATUS(*global_rc);
+	else if (WIFSIGNALED(*global_rc))
+		*global_rc = 128 + WTERMSIG(*global_rc);
 
 	mpir_cleanup();
 	log_fini();
@@ -691,13 +711,13 @@ cleanup:
 void
 update_job_state(srun_job_t *job, srun_job_state_t state)
 {
-	pthread_mutex_lock(&job->state_mutex);
+	slurm_mutex_lock(&job->state_mutex);
 	if (job->state < state) {
 		job->state = state;
 		pthread_cond_signal(&job->state_cond);
 
 	}
-	pthread_mutex_unlock(&job->state_mutex);
+	slurm_mutex_unlock(&job->state_mutex);
 	return;
 }
 
@@ -736,41 +756,27 @@ job_force_termination(srun_job_t *job)
 	kill_sent++;
 }
 
-static inline int
-_estimate_nports(int nclients, int cli_per_port)
-{
-	div_t d;
-	d = div(nclients, cli_per_port);
-	return d.rem > 0 ? d.quot + 1 : d.quot;
-}
-
-static int
-_compute_task_count(allocation_info_t *ainfo)
-{
-	int i, cnt = 0;
-#if defined HAVE_BGQ
-//#if defined HAVE_BGQ && HAVE_BG_FILES
-	/* always return the ntasks here for Q */
-	return opt.ntasks;
-#endif
-	if (opt.cpus_set) {
-		for (i = 0; i < ainfo->num_cpu_groups; i++)
-			cnt += ( ainfo->cpu_count_reps[i] *
-				 (ainfo->cpus_per_node[i]/opt.cpus_per_task));
-	} else if (opt.ntasks_per_node != NO_VAL)
-		cnt = ainfo->nnodes * opt.ntasks_per_node;
-
-	return (cnt < ainfo->nnodes) ? ainfo->nnodes : cnt;
-}
-
 static void
 _set_ntasks(allocation_info_t *ai)
 {
-	if (!opt.ntasks_set) {
-		opt.ntasks = _compute_task_count(ai);
-		if (opt.cpus_set)
-			opt.ntasks_set = true;	/* implicit */
+	int cnt = 0;
+
+	if (opt.ntasks_set)
+		return;
+
+	if (opt.ntasks_per_node != NO_VAL) {
+		cnt = ai->nnodes * opt.ntasks_per_node;
+		opt.ntasks_set = true;	/* implicit */
+	} else if (opt.cpus_set) {
+		int i;
+
+		for (i = 0; i < ai->num_cpu_groups; i++)
+			cnt += (ai->cpu_count_reps[i] *
+				(ai->cpus_per_node[i] / opt.cpus_per_task));
+		opt.ntasks_set = true;	/* implicit */
 	}
+
+	opt.ntasks = (cnt < ai->nnodes) ? ai->nnodes : cnt;
 }
 
 /*
@@ -1135,7 +1141,8 @@ static int _run_srun_script (srun_job_t *job, char *script)
 
 static void _set_env_vars(resource_allocation_response_msg_t *resp)
 {
-	char *tmp;
+	char *key, *value, *tmp;
+	int i;
 
 	if (!getenv("SLURM_JOB_CPUS_PER_NODE")) {
 		tmp = uint32_compressed_to_str(resp->num_cpu_groups,
@@ -1155,6 +1162,20 @@ static void _set_env_vars(resource_allocation_response_msg_t *resp)
 		}
 	} else {
 		unsetenv("SLURM_NODE_ALIASES");
+	}
+
+	if (resp->env_size) {	/* Used to set Burst Buffer environment */
+		for (i = 0; i < resp->env_size; i++) {
+			tmp = xstrdup(resp->environment[i]);
+			key = tmp;
+			value = strchr(tmp, '=');
+			if (value) {
+				value[0] = '\0';
+				value++;
+				setenv(key, value, 0);
+			}
+			xfree(tmp);
+		}
 	}
 
 	return;
@@ -1249,11 +1270,19 @@ static int _set_rlimit_env(void)
 	return rc;
 }
 
-/* Set SLURM_SUBMIT_DIR and SLURM_SUBMIT_HOST environment variables within
- * current state */
+/* Set SLURM_CLUSTER_NAME< SLURM_SUBMIT_DIR and SLURM_SUBMIT_HOST environment
+ * variables within current state */
 static void _set_submit_dir_env(void)
 {
 	char buf[MAXPATHLEN + 1], host[256];
+	char *cluster_name;
+
+	cluster_name = slurm_get_cluster_name();
+	if (cluster_name) {
+		if (setenvf(NULL, "SLURM_CLUSTER_NAME", "%s", cluster_name) < 0)
+			error("unable to set SLURM_CLUSTER_NAME in environment");
+		xfree(cluster_name);
+	}
 
 	if ((getcwd(buf, MAXPATHLEN)) == NULL)
 		error("getcwd failed: %m");
@@ -1445,3 +1474,8 @@ static int _validate_relative(resource_allocation_response_msg_t *resp)
 	return 0;
 }
 
+static void _call_spank_fini(void)
+{
+	if (-1 != shepard_fd)
+		spank_fini(NULL);
+}

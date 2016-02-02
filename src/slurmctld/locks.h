@@ -82,6 +82,10 @@
  * For example: no lock on the config data structure, read lock on the job
  * and node data structures, and write lock on the partition data structure
  * would look like this: "{ NO_LOCK, READ_LOCK, READ_LOCK, WRITE_LOCK }"
+ *
+ * NOTE: When using lock_slurmctld() and assoc_mgr_lock(), always call
+ * lock_slurmctld() before calling assoc_mgr_lock() and then call
+ * assoc_mgr_unlock() before calling unlock_slurmctld().
 \*****************************************************************************/
 
 #ifndef _SLURMCTLD_LOCKS_H
@@ -152,7 +156,7 @@ extern int try_lock_slurmctld (slurmctld_lock_t lock_levels);
 extern void unlock_slurmctld (slurmctld_lock_t lock_levels);
 
 /* un/lock semaphore used for saving state of slurmctld */
-inline extern void lock_state_files ( void );
-inline extern void unlock_state_files ( void );
+extern void lock_state_files ( void );
+extern void unlock_state_files ( void );
 
 #endif

@@ -4,84 +4,86 @@
 
 <h2>Index</h2>
 <ul>
-<li><a href="#1403">Slurm Version 14.03, March 2014</a></li>
-<li><a href="#1411">Slurm Version 14.11, November 2014</a></li>
-<li><a href="#1508">Slurm Version 15.08 and beyond</a></li>
+<li><a href="#1508">Slurm Version 15.08, August 2015</a></li>
+<li><a href="#1605">Slurm Version 16.05 and beyond</a></li>
 </ul>
 
-<h2><a name="1403">Major Updates in Slurm Version 14.03</a></h2>
-<p>SLURM Version 14.03 was released in March 2014.
-Major enhancements include:
+<h2><a name="1508">Major Updates Planned for Slurm Version 15.08</a></h2>
+<p>Slurm Version 15.08 was released in August 2015.
+Major enhancement include:
 <ul>
-<li>Added support for native Slurm operation on Cray systems (without ALPS).</li>
-<li>Added partition configuration parameters AllowAccounts, AllowQOS,
-    DenyAccounts and DenyQOS to provide greater control over use.</li>
-<li>Added the ability to perform load based scheduling. Allocating resources to
-    jobs on the nodes with the largest number if idle CPUs.</li>
-<li>Added support for reserving cores on a compute node for system services
-    (core specialization).</li>
-<li>Add mechanism for job_submit plugin to generate error message for srun,
-    salloc or sbatch to stderr.</li>
-<li>Added new structures and support for both server and cluster resources.</li>
-<li>Significant performance improvements, especially with respect to job
-    array support.</li>
-<li>Improved user support for fault-tolerance (e.g. "hot spare" resources).</li>
+<li>Added TRES (Trackable resources) to track utilization of memory, GRES,
+    burst buffer, license, and any other configurable resources in the
+    accounting database.</li>
+<li>Add configurable billing weight that takes into consideration any TRES when
+    calculating a job's resource utilization.</li>
+<li>Add configurable prioritization factor that takes into consideration any
+    TRES when calculating a job's resource utilization.</li>
+<li>Add burst buffer support infrastructure. Currently available plugin include
+    burst_buffer/generic (uses administrator supplied programs to manage file
+    staging) and burst_buffer/cray (uses Cray APIs to manage buffers).
+<li>Add power capping support for Cray systems with automatic rebalancing of
+    power allocation between nodes.</li>
+<li>Add support for job dependencies joined with OR operator (e.g.
+    "--depend=afterok:123?afternotok:124").</li>
+<li>Add advance reservation flag of "replace" that causes allocated resources
+    to be replaced with idle resources. This maintains a pool of available
+    resources that maintains a constant size (to the extent possible).</li>
+<li>Permit PreemptType=qos and PreemptMode=suspend,gang to be used together.
+    A high-priority QOS job will now oversubscribe resources and gang schedule,
+    but only if there are insufficient resources for the job to be started
+    without preemption. NOTE: That with PreemptType=qos, the partition's
+    Shared=FORCE:# configuration option will permit one job more per resource
+    to be run than than specified, but only if started by preemption.</li>
+<li>A partition can now have an associated QOS.  This will allow a partition
+    to have all the limits a QOS has.  If a limit is set in both QOS
+    the partition QOS will override the job's QOS unless the job's QOS has the
+    'OverPartQOS' flag set.</li>
+<li>Expanded --cpu-freq parameters to include min-max:governor specifications.
+    --cpu-freq now supported on salloc and sbatch.</li>
+<li>Add support for optimized job allocations with respect to SGI Hypercube
+    topology.</li>
+<li>Optimize resource allocation for systems with dragonfly networks.</li>
+<li>Add the ability for a compute node to be allocated to multiple jobs, but
+    restricted to a single user. Added "--exclusive=user" option to salloc,
+    the scontrol and sview commands. Added new partition configuration parameter
+    "ExclusiveUser=yes|no".</li>
+<li>Added plugin to record job completion information using Elasticsearch.</li>
+<li>Add support for PMI Exascale (PMIx) for improved MPI scalability.</li>
+<li>Add support for communication gateway nodes to improve scalability.</li>
+<li>Add layouts framework, which will be the basis for further developments toward
+    optimizing scheduling with respect to additional parameters such as temperature
+    and power consumption.</li>
 </ul>
-</p>
 
-<h2><a name="1411">Major Updates in Slurm Version 14.11</a></h2>
-<p>SLURM Version 14.11 is scheduled for release in November 2014.
-Major enhancements include:
-<ul>
-<li>Communication gateway nodes to improve scalability.</li>
-<li>Support for heterogeneous generic resources (i.e. user specification of
-    desired GPU types).</li>
-<li>Support for non-consumable generic resources that are shared, but limited
-    in number.</li>
-<li>Support for automatic job requeue policy based on exit value.</li>
-<li>Add user options to set the CPU governor (OnDemand, Performance,
-    PowerSave or UserSpace) in addition to being able to explicitly set the
-    CPU frequency currently available.</li>
-<li>Report Slurm message traffic by user, type, count and time consumed.</li>
-</ul>
-</p>
-
-
-<h2><a name="1508">Major Updates in Slurm Version 15.08 and beyond</a></h2>
-<p> Detailed plans for release dates and contents of additional SLURM releases
-have not been finalized. Anyone desiring to perform SLURM development should
+<h2><a name="1605">Major Updates in Slurm Version 16.05 and beyond</a></h2>
+<p> Detailed plans for release dates and contents of additional Slurm releases
+have not been finalized. Anyone desiring to perform Slurm development should
 notify <a href="mailto:slurm-dev@schedmd.com">slurm-dev@schedmd.com</a>
 to coordinate activities. Future development plans includes:
 <ul>
-<li>Integration with
-    <a href="http://en.wikipedia.org/wiki/FlexNet_Publisher">FLEXlm (Flexnet Publisher)</a>
-    license management.</li>
-<li>Layouts framework, which will be the basis for further developments toward
-    optimizing scheduling with respect to additional parameters such as temperature
-    and power consumption.</li>
-<li>Energy consumption added as a factor in fair-share scheduling.</li>
-<li>Energy aware scheduling added with respect to power caps.</li>
+<!-- Bull led -->
+<li>Add support asymmetric resource allocation and MPMD programming. Multiple
+    resource allocation specification (memory, CPUs, GPUs, etc.) will be
+    supported in a single job allocation.</li>
+<!-- Universitat Jaume I & Universitat Politecnica de Valencia -->
+<li>Add support for
+<a href="http://slurm.schedmd.com/SUG14/remote_gpu.pdf">Remote CUDA (rCUDA)</a></li>
 <li>Distributed architecture to support the management of resources with Intel
-    MIC processors.</li>
-<li>Support of I/O as a new resources, including proxy I/O nodes with data
-    locality.</li>
-<li>Improved scheduling support for job dependencies (e.g. pre-processing,
-    post-processing, co-processing on I/O nodes, etc.) to optimize overall
-    system utilization.</li>
-<li>IP communications over InfiniBand network for improved performance.</li>
+    Knight's Landing processors.</li>
 <li>Fault-tolerance and jobs dynamic adaptation through communication protocol
-    between Slurm , MPI libraries and the application.</li>
+    between Slurm, MPI libraries and the application.</li>
+<li>Improved support for provisioning and virtualization.</li>
+<!-- <li>IP communications over InfiniBand network for improved performance.</li>
+<li>Integration with
+    <a href="http://en.wikipedia.org/wiki/FlexNet_Publisher">FLEXlm
+    (Flexnet Publisher)</a> license management.</li>
 <li>Improved support for high-throughput computing (e.g. multiple slurmctld
     daemons on a single cluster).</li>
-<li>Scheduling fully optimized for energy efficiency.</li>
-<li>Numerous enhancements to advanced resource reservations (e.g. start or
-    end the reservation early depending upon the workload).</li>
 <li>Add Kerberos credential support including credential forwarding
     and refresh.</li>
-<li>Improved support for provisioning and virtualization.</li> 
-<li>Provide a web-based SLURM administration tool.</li>
+<li>Provide a web-based Slurm administration tool.</li> -->
 </ul>
-
-<p style="text-align:center;">Last modified 29 May 2014</p>
+<p style="text-align:center;">Last modified 22 October 2015</p>
 
 <!--#include virtual="footer.txt"-->

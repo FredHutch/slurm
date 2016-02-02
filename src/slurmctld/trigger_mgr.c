@@ -45,18 +45,11 @@
 #  include <pthread.h>
 #endif
 
-#if defined(__NetBSD__)
-#include <sys/types.h> /* for pid_t */
-#include <sys/signal.h> /* for SIGKILL */
-#endif
-#if defined(__FreeBSD__)
-#include <signal.h>
-#endif
-
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <signal.h>
 #include <stdlib.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -78,7 +71,6 @@
 
 /* Change TRIGGER_STATE_VERSION value when changing the state save format */
 #define TRIGGER_STATE_VERSION        "PROTOCOL_VERSION"
-#define TRIGGER_14_03_STATE_VERSION  "VER004"	/* SLURM version 14.03 */
 
 List trigger_list;
 uint32_t next_trigger_id = 1;
@@ -398,8 +390,8 @@ static bool _duplicate_trigger(trigger_info_t *trig_desc)
 		    (trig_desc->trig_type == trig_rec->trig_type)  &&
 		    (trig_desc->offset    == trig_rec->trig_time)  &&
 		    (trig_desc->user_id   == trig_rec->user_id)    &&
-		    !strcmp(trig_desc->program, trig_rec->program) &&
-		    !strcmp(trig_desc->res_id, trig_rec->res_id)) {
+		    !xstrcmp(trig_desc->program, trig_rec->program) &&
+		    !xstrcmp(trig_desc->res_id, trig_rec->res_id)) {
 			found_dup = true;
 			break;
 		}
@@ -967,15 +959,8 @@ extern void trigger_state_restore(void)
 
 	buffer = create_buf(data, data_size);
 	safe_unpackstr_xmalloc(&ver_str, &ver_str_len, buffer);
-	if (ver_str) {
-		/* 14.03 and 2.6 all had the same version, so just go
-		   with 14.03 here.
-		*/
-		if (!strcmp(ver_str, TRIGGER_STATE_VERSION))
-			safe_unpack16(&protocol_version, buffer);
-		else if (!strcmp(ver_str, TRIGGER_14_03_STATE_VERSION))
-			protocol_version = SLURM_14_03_PROTOCOL_VERSION;
-	}
+	if (ver_str && !strcmp(ver_str, TRIGGER_STATE_VERSION))
+		safe_unpack16(&protocol_version, buffer);
 
 	if (protocol_version == (uint16_t) NO_VAL) {
 		error("Can't recover trigger state, data version "
@@ -1025,10 +1010,7 @@ static bool _front_end_job_test(bitstr_t *front_end_bitmap,
 /* Test if the event has been triggered, change trigger state as needed */
 static void _trigger_job_event(trig_mgr_info_t *trig_in, time_t now)
 {
-	if ((trig_in->job_ptr == NULL) ||
-	    (trig_in->job_ptr->magic != JOB_MAGIC) ||
-	    (trig_in->job_ptr->job_id != trig_in->job_id))
-		trig_in->job_ptr = find_job_record(trig_in->job_id);
+	trig_in->job_ptr = find_job_record(trig_in->job_id);
 
 	if ((trig_in->trig_type & TRIGGER_TYPE_FINI) &&
 	    ((trig_in->job_ptr == NULL) ||
@@ -1744,10 +1726,7 @@ extern void trigger_process(void)
 /* Free all allocated memory */
 extern void trigger_fini(void)
 {
-	if (trigger_list != NULL) {
-		list_destroy(trigger_list);
-		trigger_list = NULL;
-	}
+	FREE_NULL_LIST(trigger_list);
 	FREE_NULL_BITMAP(trigger_down_front_end_bitmap);
 	FREE_NULL_BITMAP(trigger_up_front_end_bitmap);
 	FREE_NULL_BITMAP(trigger_down_nodes_bitmap);

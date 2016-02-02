@@ -83,15 +83,12 @@ resource_allocation_response_msg_t *global_resp = NULL;
  * of how this plugin satisfies that application.  SLURM will only load
  * a task plugin if the plugin_type string has a prefix of "task/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as this API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]        = "launch aprun plugin";
 const char plugin_type[]        = "launch/aprun";
-const uint32_t plugin_version   = 101;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
 static pid_t aprun_pid = 0;
 
@@ -233,7 +230,8 @@ static void _handle_multi_prog(char *in_file, int *command_pos)
 	FILE *fp;
 	int count = 0;
 
-	if (verify_multi_name(in_file, &opt.ntasks, &opt.ntasks_set))
+	if (verify_multi_name(in_file, &opt.ntasks, &opt.ntasks_set,
+			      &opt.multi_prog_cmds))
 		exit(error_exit);
 
 	fp = fopen(in_file, "r");
@@ -318,7 +316,8 @@ static void _handle_timeout(srun_timeout_msg_t *timeout_msg)
 static void _handle_msg(slurm_msg_t *msg)
 {
 	static uint32_t slurm_uid = NO_VAL;
-	uid_t req_uid = g_slurm_auth_get_uid(msg->auth_cred, NULL);
+	uid_t req_uid = g_slurm_auth_get_uid(msg->auth_cred,
+					     slurm_get_auth_info());
 	uid_t uid = getuid();
 	job_step_kill_msg_t *ss;
 	srun_user_msg_t *um;
@@ -335,29 +334,24 @@ static void _handle_msg(slurm_msg_t *msg)
 	case SRUN_PING:
 		debug3("slurmctld ping received");
 		slurm_send_rc_msg(msg, SLURM_SUCCESS);
-		slurm_free_srun_ping_msg(msg->data);
 		break;
 	case SRUN_JOB_COMPLETE:
 		debug("received job step complete message");
 		_handle_step_complete(msg->data);
-		slurm_free_srun_job_complete_msg(msg->data);
 		break;
 	case SRUN_USER_MSG:
 		um = msg->data;
 		info("%s", um->msg);
-		slurm_free_srun_user_msg(msg->data);
 		break;
 	case SRUN_TIMEOUT:
 		debug2("received job step timeout message");
 		_handle_timeout(msg->data);
-		slurm_free_srun_timeout_msg(msg->data);
 		break;
 	case SRUN_STEP_SIGNAL:
 		ss = msg->data;
 		debug("received step signal %u RPC", ss->signal);
 		if (ss->signal)
 			launch_p_fwd_signal(ss->signal);
-		slurm_free_job_step_kill_msg(msg->data);
 		break;
 	default:
 		debug("received spurious message type: %u",
@@ -388,12 +382,12 @@ static void *_msg_thr_internal(void *arg)
 		if (slurm_receive_msg(newsockfd, msg, 0) != 0) {
 			error("slurm_receive_msg: %m");
 			/* close the new socket */
-			slurm_close_accepted_conn(newsockfd);
+			slurm_close(newsockfd);
 			continue;
 		}
 		_handle_msg(msg);
 		slurm_free_msg(msg);
-		slurm_close_accepted_conn(newsockfd);
+		slurm_close(newsockfd);
 	}
 	return NULL;
 }
@@ -472,16 +466,23 @@ extern int launch_p_setup_srun_opt(char **rest)
 			"%u", opt.cpus_per_task);
 	}
 
-	if (opt.shared != (uint16_t)NO_VAL) {
-		opt.argc += 2;
-		xrealloc(opt.argv, opt.argc * sizeof(char *));
-		opt.argv[command_pos++] = xstrdup("-F");
-		opt.argv[command_pos++] = xstrdup("share");
-	} else if (opt.exclusive) {
+	if (opt.exclusive) {
 		opt.argc += 2;
 		xrealloc(opt.argv, opt.argc * sizeof(char *));
 		opt.argv[command_pos++] = xstrdup("-F");
 		opt.argv[command_pos++] = xstrdup("exclusive");
+	} else if (opt.shared == 1) {
+		opt.argc += 2;
+		xrealloc(opt.argv, opt.argc * sizeof(char *));
+		opt.argv[command_pos++] = xstrdup("-F");
+		opt.argv[command_pos++] = xstrdup("share");
+	}
+
+	if (opt.cpu_bind_type & CPU_BIND_ONE_THREAD_PER_CORE) {
+		opt.argc += 2;
+		xrealloc(opt.argv, opt.argc * sizeof(char *));
+		opt.argv[command_pos++] = xstrdup("-j");
+		opt.argv[command_pos++] = xstrdup("1");
 	}
 
 	if (opt.nodelist) {
@@ -691,20 +692,6 @@ extern int launch_p_create_job_step(srun_job_t *job, bool use_all_cpus,
 				    void (*signal_function)(int),
 				    sig_atomic_t *destroy_job)
 {
-	char value[32];
-
-	/* If srun is call directly this wasn't figured out until
-	   later if the user used --mem.  The problem here is this
-	   will not work with --launch_cmd since that doesn't go get
-	   an actual allocation (which is where pn_min_memory is decided).
-	*/
-	if ((opt.mem_per_cpu == NO_VAL)
-	    && global_resp && (global_resp->pn_min_memory & MEM_PER_CPU)) {
-		snprintf(value, sizeof(value), "%u",
-			 global_resp->pn_min_memory & (~MEM_PER_CPU));
-		setenv("APRUN_DEFAULT_MEMORY", value, 1);
-	}
-
 	if (opt.launch_cmd) {
 		int i = 0;
 		char *cmd_line = NULL;

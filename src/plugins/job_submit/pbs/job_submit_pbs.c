@@ -88,14 +88,14 @@
  * only load authentication plugins if the plugin_type string has a prefix
  * of "auth/".
  *
- * plugin_version   - specifies the version number of the plugin.
- * min_plug_version - specifies the minumum version number of incoming
- *                    messages that this plugin can accept
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]       	= "Job submit PBS plugin";
 const char plugin_type[]       	= "job_submit/pbs";
-const uint32_t plugin_version   = 100;
-const uint32_t min_plug_version = 100;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
+
+static pthread_mutex_t depend_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 int init (void)
 {
@@ -160,13 +160,10 @@ static void _decr_depend_cnt(struct job_record *job_ptr)
 static void *_dep_agent(void *args)
 {
 	struct job_record *job_ptr = (struct job_record *) args;
-	slurmctld_lock_t job_write_lock = {
-		NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK};
 	char *end_ptr = NULL, *tok;
 	int cnt = 0;
 
 	usleep(100000);
-	lock_slurmctld(job_write_lock);
 	if (job_ptr && job_ptr->details && (job_ptr->magic == JOB_MAGIC) &&
 	    job_ptr->comment && strstr(job_ptr->comment, "on:")) {
 		char *new_depend = job_ptr->details->dependency;
@@ -178,7 +175,6 @@ static void *_dep_agent(void *args)
 	}
 	if (cnt == 0)
 		set_job_prio(job_ptr);
-	unlock_slurmctld(job_write_lock);
 	return NULL;
 }
 
@@ -206,6 +202,16 @@ static void _xlate_before(char *depend, uint32_t submit_uid, uint32_t my_job_id)
 		return;
 	}
 
+	/* NOTE: We are updating a job record here in order to implement
+	 * the depend=before option. We are doing so without the write lock
+	 * on the job record, but using a local mutex to prevent multiple
+	 * updates on the same job when multiple jobs satisfying the dependency
+	 * are being processed at the same time (all with read locks). The
+	 * job read lock will prevent anyone else from getting a job write
+	 * lock and using a job write lock causes serious performance problems
+	 * for slow job_submit plugins. Not an ideal solution, but the best
+	 * option that we see. */
+	slurm_mutex_lock(&depend_mutex);
 	tok = strtok_r(NULL, ":", &last_ptr);
 	while (tok) {
 		job_id = atoi(tok);
@@ -243,6 +249,7 @@ static void _xlate_before(char *depend, uint32_t submit_uid, uint32_t my_job_id)
 		}
 		tok = strtok_r(NULL, ":", &last_ptr);
 	}
+	slurm_mutex_unlock(&depend_mutex);
 }
 
 /* Translate PBS job dependencies to Slurm equivalents to the exptned possible
@@ -305,8 +312,9 @@ static void _xlate_dependency(struct job_descriptor *job_desc,
 extern int job_submit(struct job_descriptor *job_desc, uint32_t submit_uid)
 {
 	char *std_out, *tok;
-	uint32_t my_job_id = get_next_job_id();
+	uint32_t my_job_id;
 
+	my_job_id = get_next_job_id();
 	_xlate_dependency(job_desc, submit_uid, my_job_id);
 
 	if (job_desc->account)
@@ -358,6 +366,8 @@ extern int job_submit(struct job_descriptor *job_desc, uint32_t submit_uid)
 extern int job_modify(struct job_descriptor *job_desc,
 		      struct job_record *job_ptr, uint32_t submit_uid)
 {
+	/* Locks: Read config, write job, read node, read partition
+	 * HAVE BEEN SET ON ENTRY TO THIS FUNCTION */
 	char *tok;
 
 	xassert(job_ptr);

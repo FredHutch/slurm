@@ -41,6 +41,8 @@
 #ifndef _TASK_CGROUP_H_
 #define _TASK_CGROUP_H_
 
+#include "src/slurmd/common/xcgroup.h"
+
 extern char* task_cgroup_create_slurm_cg (xcgroup_ns_t* ns);
 
 #endif

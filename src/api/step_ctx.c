@@ -89,6 +89,7 @@ _job_fake_cred(struct slurm_step_ctx_struct *ctx)
 	slurm_cred_arg_t arg;
 	uint32_t node_cnt = ctx->step_resp->step_layout->node_cnt;
 
+	memset(&arg, 0, sizeof(slurm_cred_arg_t));
 	arg.jobid          = ctx->job_id;
 	arg.stepid         = ctx->step_resp->job_step_id;
 	arg.uid            = ctx->user_id;
@@ -100,6 +101,8 @@ _job_fake_cred(struct slurm_step_ctx_struct *ctx)
 	arg.step_hostlist  = ctx->step_req->node_list;
 	arg.step_mem_limit = 0;
 
+	arg.job_gres_list     = NULL;
+	arg.job_constraints   = NULL;
 	arg.job_core_bitmap   = bit_alloc(node_cnt);
 	bit_nset(arg.job_core_bitmap,  0, node_cnt-1);
 	arg.step_core_bitmap  = bit_alloc(node_cnt);
@@ -125,7 +128,9 @@ static job_step_create_request_msg_t *_create_step_request(
 	step_req->min_nodes = step_params->min_nodes;
 	step_req->max_nodes = step_params->max_nodes;
 	step_req->cpu_count = step_params->cpu_count;
-	step_req->cpu_freq  = step_params->cpu_freq;
+	step_req->cpu_freq_min = step_params->cpu_freq_min;
+	step_req->cpu_freq_max = step_params->cpu_freq_max;
+	step_req->cpu_freq_gov = step_params->cpu_freq_gov;
 	step_req->num_tasks = step_params->task_count;
 	step_req->relative = step_params->relative;
 	step_req->resv_port_cnt = step_params->resv_port_cnt;
@@ -161,7 +166,7 @@ slurm_step_ctx_create (const slurm_step_ctx_params_t *step_params)
 	job_step_create_request_msg_t *step_req = NULL;
 	job_step_create_response_msg_t *step_resp = NULL;
 	int sock = -1;
-	short port = 0;
+	uint16_t port = 0;
 	int errnum = 0;
 
 	/* First copy the user's step_params into a step request struct */
@@ -220,8 +225,10 @@ slurm_step_ctx_create_timeout (const slurm_step_ctx_params_t *step_params,
 	job_step_create_response_msg_t *step_resp = NULL;
 	int i, rc, time_left = timeout;
 	int sock = -1;
-	short port = 0;
+	uint16_t port = 0;
 	int errnum = 0;
+	int cc;
+	uint16_t *ports;
 
 	/* First copy the user's step_params into a step request struct */
 	step_req = _create_step_request(step_params);
@@ -230,7 +237,11 @@ slurm_step_ctx_create_timeout (const slurm_step_ctx_params_t *step_params,
 	 * but we need to open the socket right now so we can tell the
 	 * controller which port to use.
 	 */
-	if (net_stream_listen(&sock, &port) < 0) {
+	if ((ports = slurm_get_srun_port_range()))
+		cc = net_stream_listen_ports(&sock, &port, ports);
+	else
+		cc = net_stream_listen(&sock, &port);
+	if (cc < 0) {
 		errnum = errno;
 		error("unable to initialize step context socket: %m");
 		slurm_free_job_step_create_request_msg(step_req);
@@ -242,6 +253,8 @@ slurm_step_ctx_create_timeout (const slurm_step_ctx_params_t *step_params,
 	rc = slurm_job_step_create(step_req, &step_resp);
 	if ((rc < 0) &&
 	    ((errno == ESLURM_NODES_BUSY) ||
+	     (errno == ESLURM_POWER_NOT_AVAIL) ||
+	     (errno == ESLURM_POWER_RESERVED) ||
 	     (errno == ESLURM_PORTS_BUSY) ||
 	     (errno == ESLURM_INTERCONNECT_BUSY))) {
 		struct pollfd fds;
@@ -304,7 +317,7 @@ slurm_step_ctx_create_no_alloc (const slurm_step_ctx_params_t *step_params,
 	job_step_create_request_msg_t *step_req = NULL;
 	job_step_create_response_msg_t *step_resp = NULL;
 	int sock = -1;
-	short port = 0;
+	uint16_t port = 0;
 	int errnum = 0;
 
 	/* First copy the user's step_params into a step request struct */

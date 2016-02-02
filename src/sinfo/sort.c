@@ -54,6 +54,7 @@ static void _get_sinfo_from_void(sinfo_data_t **s1, sinfo_data_t **s2,
 				 void *v1, void *v2);
 static int _sort_by_avail(void *void1, void *void2);
 static int _sort_by_cpu_load(void *void1, void *void2);
+static int _sort_by_free_mem(void *void1, void *void2);
 static int _sort_by_cpus(void *void1, void *void2);
 static int _sort_by_sct(void *void1, void *void2);
 static int _sort_by_sockets(void *void1, void *void2);
@@ -61,6 +62,7 @@ static int _sort_by_cores(void *void1, void *void2);
 static int _sort_by_threads(void *void1, void *void2);
 static int _sort_by_disk(void *void1, void *void2);
 static int _sort_by_features(void *void1, void *void2);
+static int _sort_by_features_act(void *void1, void *void2);
 static int _sort_by_groups(void *void1, void *void2);
 static int _sort_by_hostnames(void *void1, void *void2);
 static int _sort_by_job_size(void *void1, void *void2);
@@ -111,6 +113,8 @@ void sort_sinfo_list(List sinfo_list)
 			list_sort(sinfo_list, _sort_by_avail);
 		else if (params.sort[i] == 'A')
 			list_sort(sinfo_list, _sort_by_nodes_ai);
+		else if (params.sort[i] == 'b')
+			list_sort(sinfo_list, _sort_by_features_act);
 		else if (params.sort[i] == 'c')
 			list_sort(sinfo_list, _sort_by_cpus);
 		else if (params.sort[i] == 'd')
@@ -143,6 +147,8 @@ void sort_sinfo_list(List sinfo_list)
 			list_sort(sinfo_list, _sort_by_node_addr);
 		else if (params.sort[i] == 'O')
 			list_sort(sinfo_list, _sort_by_cpu_load);
+		else if (params.sort[i] == 'e')
+			list_sort(sinfo_list, _sort_by_free_mem);
 		else if (params.sort[i] == 'p')
 			list_sort(sinfo_list, _sort_by_priority);
 		else if (params.sort[i] == 'P')
@@ -221,6 +227,21 @@ static int _sort_by_cpu_load(void *void1, void *void2)
 	_get_sinfo_from_void(&sinfo1, &sinfo2, void1, void2);
 
 	diff = _diff_uint32(sinfo1->min_cpu_load, sinfo2->min_cpu_load);
+
+	if (reverse_order)
+		diff = -diff;
+	return diff;
+}
+
+static int _sort_by_free_mem(void *void1, void *void2)
+{
+	int diff;
+	sinfo_data_t *sinfo1;
+	sinfo_data_t *sinfo2;
+
+	_get_sinfo_from_void(&sinfo1, &sinfo2, void1, void2);
+
+	diff = _diff_uint32(sinfo1->min_free_mem, sinfo2->min_free_mem);
 
 	if (reverse_order)
 		diff = -diff;
@@ -340,6 +361,26 @@ static int _sort_by_features(void *void1, void *void2)
 		val1 = sinfo1->features;
 	if (sinfo2->features)
 		val2 = sinfo2->features;
+	diff = strcmp(val1, val2);
+
+	if (reverse_order)
+		diff = -diff;
+	return diff;
+}
+
+static int _sort_by_features_act(void *void1, void *void2)
+{
+	int diff;
+	sinfo_data_t *sinfo1;
+	sinfo_data_t *sinfo2;
+	char *val1 = "", *val2 = "";
+
+	_get_sinfo_from_void(&sinfo1, &sinfo2, void1, void2);
+
+	if (sinfo1->features_act)
+		val1 = sinfo1->features_act;
+	if (sinfo2->features_act)
+		val2 = sinfo2->features_act;
 	diff = strcmp(val1, val2);
 
 	if (reverse_order)

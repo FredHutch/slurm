@@ -5,7 +5,7 @@
  *  Written by Morris Jette <jette@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://www.schedmd.com/slurmdocs/>.
+ *  For details, see <http://slurm.schedmd.com>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -59,6 +59,10 @@
 #include "src/plugins/slurmctld/nonstop/do_work.h"
 #include "src/plugins/slurmctld/nonstop/msg.h"
 #include "src/plugins/slurmctld/nonstop/read_config.h"
+
+/* This version string is defined at configure time of libsmd. The
+ * META of libsmd needs to reflect this version. */
+char *version_string = "VERSION:16.05";
 
 /* When a remote socket closes on AIX, we have seen poll() return EAGAIN
  * indefinitely for a pending write request. Rather than locking up
@@ -244,20 +248,20 @@ static void _proc_msg(slurm_fd_t new_fd, char *msg, slurm_addr_t cli_addr)
 		info("slurmctld/nonstop: msg decrypted:%s", msg_decrypted);
 	cmd_ptr = msg_decrypted;
 
-			   /* 123456789012345678901234567890 */
-	if (strncmp(cmd_ptr, "VERSION:14.03", 13) == 0) {
-		cmd_ptr = strchr(cmd_ptr + 10, ':');
+	/* 123456789012345678901234567890 */
+	if (strncmp(cmd_ptr, version_string, 13) == 0) {
+		cmd_ptr = strchr(cmd_ptr + 13, ':');
 		if (cmd_ptr) {
 			cmd_ptr++;
-			protocol_version = SLURM_14_03_PROTOCOL_VERSION;
+			protocol_version = SLURM_PROTOCOL_VERSION;
 		}
 	}
+
 	if (protocol_version == 0) {
 		info("slurmctld/nonstop: Message version invalid");
 		resp = xstrdup("Error:\"Message version invalid\"");
 		goto send_resp;
 	}
-
 	if (strncmp(cmd_ptr, "CALLBACK:JOBID:", 15) == 0) {
 		resp = register_callback(cmd_ptr, cmd_uid, cli_addr,
 					 protocol_version);
@@ -341,7 +345,7 @@ static void *_msg_thread(void *no_data)
 			_proc_msg(new_fd, msg, cli_addr);
 			xfree(msg);
 		}
-		slurm_close_accepted_conn(new_fd);
+		slurm_close(new_fd);
 	}
 	debug("slurmctld/nonstop: message engine shutdown");
 	if (sock_fd > 0)
@@ -354,10 +358,10 @@ extern int spawn_msg_thread(void)
 {
 	pthread_attr_t thread_attr_msg;
 
-	pthread_mutex_lock(&thread_flag_mutex);
+	slurm_mutex_lock(&thread_flag_mutex);
 	if (thread_running) {
 		error("nonstop thread already running");
-		pthread_mutex_unlock(&thread_flag_mutex);
+		slurm_mutex_unlock(&thread_flag_mutex);
 		return SLURM_ERROR;
 	}
 
@@ -367,14 +371,14 @@ extern int spawn_msg_thread(void)
 		fatal("pthread_create %m");
 	slurm_attr_destroy(&thread_attr_msg);
 	thread_running = true;
-	pthread_mutex_unlock(&thread_flag_mutex);
+	slurm_mutex_unlock(&thread_flag_mutex);
 
 	return SLURM_SUCCESS;
 }
 
 extern void term_msg_thread(void)
 {
-	pthread_mutex_lock(&thread_flag_mutex);
+	slurm_mutex_lock(&thread_flag_mutex);
 	if (thread_running) {
 		int fd;
 		slurm_addr_t addr;
@@ -386,10 +390,10 @@ extern void term_msg_thread(void)
 		 * so that it can check the thread_shutdown flag.
 		 */
 		slurm_set_addr(&addr, nonstop_comm_port, "localhost");
-		fd = slurm_open_stream(&addr);
+		fd = slurm_open_stream(&addr, true);
 		if (fd != -1) {
 			/* we don't care if the open failed */
-			slurm_close_stream(fd);
+			slurm_close(fd);
 		}
 
 		debug2("waiting for slurmctld/nonstop thread to exit");
@@ -399,5 +403,5 @@ extern void term_msg_thread(void)
 		thread_running = false;
 		debug2("join of slurmctld/nonstop thread was successful");
 	}
-	pthread_mutex_unlock(&thread_flag_mutex);
+	slurm_mutex_unlock(&thread_flag_mutex);
 }

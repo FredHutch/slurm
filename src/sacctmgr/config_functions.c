@@ -86,8 +86,7 @@ static void _free_dbd_config(void)
 	if (!dbd_config_list)
 		return;
 
-	list_destroy(dbd_config_list);
-	dbd_config_list = NULL;
+	FREE_NULL_LIST(dbd_config_list);
 }
 
 static void _load_slurm_config(void)
@@ -138,9 +137,8 @@ static void _print_slurm_config(void)
 	printf("PluginDir              = %s\n", plugin_dir);
 	private_data_string(private_data, tmp_str, sizeof(tmp_str));
 	printf("PrivateData            = %s\n", tmp_str);
-	user_name = uid_to_string(slurm_user_id);
+	user_name = uid_to_string_cached(slurm_user_id);
 	printf("SlurmUserId            = %s(%u)\n", user_name, slurm_user_id);
-	xfree(user_name);
 	printf("SLURM_CONF             = %s\n", default_slurm_config_file);
 	printf("SLURM_VERSION          = %s\n", SLURM_VERSION_STRING);
 	printf("TrackWCKey             = %u\n", track_wckey);

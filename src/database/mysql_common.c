@@ -251,6 +251,7 @@ static int _mysql_make_table_current(mysql_conn_t *mysql_conn, char *table_name,
 	if (!(result = mysql_db_query_ret(mysql_conn, query, 0))) {
 		xfree(query);
 		xfree(old_index);
+		FREE_NULL_LIST(keys_list);
 		return SLURM_ERROR;
 	}
 	xfree(query);
@@ -263,8 +264,8 @@ static int _mysql_make_table_current(mysql_conn_t *mysql_conn, char *table_name,
 
 
 	itr = list_iterator_create(columns);
-	query = xstrdup_printf("alter table %s", table_name);
-	correct_query = xstrdup_printf("alter table %s", table_name);
+	query = xstrdup_printf("alter ignore table %s", table_name);
+	correct_query = xstrdup_printf("alter ignore table %s", table_name);
 	START_TIMER;
 	while (fields[i].name) {
 		int found = 0;
@@ -322,7 +323,7 @@ static int _mysql_make_table_current(mysql_conn_t *mysql_conn, char *table_name,
 	}
 
 	list_iterator_destroy(itr);
-	list_destroy(columns);
+	FREE_NULL_LIST(columns);
 
 	if ((temp = strstr(ending, "primary key ("))) {
 		int open = 0, close =0;
@@ -418,9 +419,12 @@ static int _mysql_make_table_current(mysql_conn_t *mysql_conn, char *table_name,
 				xstrfmtcat(correct_query,
 					   " drop key %s,", db_key->name);
 				_destroy_db_key(db_key);
-			} else
+			} else {
+				xstrfmtcat(correct_query,
+					   " drop key %s,", new_key_name);
 				info("adding %s to table %s",
 				     new_key, table_name);
+			}
 
 			xstrfmtcat(query, " add %s,",  new_key);
 			xstrfmtcat(correct_query, " add %s,",  new_key);
@@ -438,7 +442,7 @@ static int _mysql_make_table_current(mysql_conn_t *mysql_conn, char *table_name,
 	}
 	list_iterator_destroy(itr);
 
-	list_destroy(keys_list);
+	FREE_NULL_LIST(keys_list);
 
 	query[strlen(query)-1] = ';';
 	correct_query[strlen(correct_query)-1] = ';';
@@ -596,7 +600,7 @@ extern int destroy_mysql_conn(mysql_conn_t *mysql_conn)
 		xfree(mysql_conn->pre_commit_query);
 		xfree(mysql_conn->cluster_name);
 		slurm_mutex_destroy(&mysql_conn->lock);
-		list_destroy(mysql_conn->update_list);
+		FREE_NULL_LIST(mysql_conn->update_list);
 		xfree(mysql_conn);
 	}
 
@@ -664,6 +668,11 @@ extern int mysql_db_get_db_connection(mysql_conn_t *mysql_conn, char *db_name,
 		fatal("mysql_init failed: %s",
 		      mysql_error(mysql_conn->db_conn));
 	} else {
+		/* If this ever changes you will need to alter
+		 * src/common/slurmdbd_defs.c function _send_init_msg to
+		 * handle a different timeout when polling for the
+		 * response.
+		 */
 		unsigned int my_timeout = 30;
 #ifdef MYSQL_OPT_RECONNECT
 		my_bool reconnect = 1;
@@ -696,10 +705,19 @@ extern int mysql_db_get_db_connection(mysql_conn_t *mysql_conn, char *db_name,
 					}
 
 					rc = ESLURM_DB_CONNECTION;
+					mysql_close(mysql_conn->db_conn);
+					mysql_conn->db_conn = NULL;
 					break;
 				}
 			} else {
 				storage_init = true;
+				if (mysql_conn->rollback)
+					mysql_autocommit(
+						mysql_conn->db_conn, 0);
+				rc = _mysql_query_internal(
+					mysql_conn->db_conn,
+					"SET session sql_mode='ANSI_QUOTES,"
+					"NO_ENGINE_SUBSTITUTION';");
 			}
 		}
 	}
@@ -744,6 +762,25 @@ extern int mysql_db_query(mysql_conn_t *mysql_conn, char *query)
 	}
 	slurm_mutex_lock(&mysql_conn->lock);
 	rc = _mysql_query_internal(mysql_conn->db_conn, query);
+	slurm_mutex_unlock(&mysql_conn->lock);
+	return rc;
+}
+
+/*
+ * Executes a single delete sql query.
+ * Returns the number of deleted rows, <0 for failure.
+ */
+extern int mysql_db_delete_affected_rows(mysql_conn_t *mysql_conn, char *query)
+{
+	int rc = SLURM_SUCCESS;
+
+	if (!mysql_conn || !mysql_conn->db_conn) {
+		fatal("You haven't inited this storage yet.");
+		return 0;	/* For CLANG false positive */
+	}
+	slurm_mutex_lock(&mysql_conn->lock);
+	if (!(rc = _mysql_query_internal(mysql_conn->db_conn, query)))
+			rc = mysql_affected_rows(mysql_conn->db_conn);
 	slurm_mutex_unlock(&mysql_conn->lock);
 	return rc;
 }

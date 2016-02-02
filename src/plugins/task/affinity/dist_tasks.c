@@ -213,7 +213,7 @@ void batch_bind(batch_job_launch_msg_t *req)
 	}
 
 	str = (char *)bit_fmt_hexmask(req_map);
-	debug3("task/affinity: job %u CPU mask from slurmctld: %s",
+	debug3("task/affinity: job %u core mask from slurmctld: %s",
 		req->job_id, str);
 	xfree(str);
 
@@ -240,6 +240,7 @@ void batch_bind(batch_job_launch_msg_t *req)
 		req->cpu_bind_type = CPU_BIND_MASK;
 		if (conf->task_plugin_param & CPU_BIND_VERBOSE)
 			req->cpu_bind_type |= CPU_BIND_VERBOSE;
+		xfree(req->cpu_bind);
 		req->cpu_bind = (char *)bit_fmt_hexmask(hw_map);
 		info("task/affinity: job %u CPU input mask for node: %s",
 		     req->job_id, req->cpu_bind);
@@ -376,6 +377,21 @@ void lllp_distribution(launch_tasks_request_msg_t *req, uint32_t node_id)
 				    CPU_BIND_RANK   | CPU_BIND_MAP    |
 				    CPU_BIND_LDMASK | CPU_BIND_LDRANK |
 				    CPU_BIND_LDMAP;
+	static int only_one_thread_per_core = -1;
+
+	if (only_one_thread_per_core == -1) {
+		if (conf->cpus == (conf->sockets * conf->cores))
+			only_one_thread_per_core = 1;
+		else
+			only_one_thread_per_core = 0;
+	}
+
+	/* If we are telling the system we only want to use 1 thread
+	 * per core with the CPUs node option this is the easiest way
+	 * to portray that to the affinity plugin.
+	 */
+	if (only_one_thread_per_core)
+		req->cpu_bind_type |= CPU_BIND_ONE_THREAD_PER_CORE;
 
 	if (req->cpu_bind_type & bind_mode) {
 		/* Explicit step binding specified by user */
@@ -409,7 +425,11 @@ void lllp_distribution(launch_tasks_request_msg_t *req, uint32_t node_id)
 	if (!(req->cpu_bind_type & bind_entity)) {
 		/* No bind unit (sockets, cores) specified by user,
 		 * pick something reasonable */
-		int max_tasks = req->tasks_to_launch[(int)node_id];
+		uint32_t task_plugin_param = slurm_get_task_plugin_param();
+		bool auto_def_set = false;
+		int spec_thread_cnt = 0;
+		int max_tasks = req->tasks_to_launch[(int)node_id] *
+			req->cpus_per_task;
 		char *avail_mask = _alloc_mask(req,
 					       &whole_nodes,  &whole_sockets,
 					       &whole_cores,  &whole_threads,
@@ -418,12 +438,21 @@ void lllp_distribution(launch_tasks_request_msg_t *req, uint32_t node_id)
 		      "nodes:%d sockets:%d:%d cores:%d:%d threads:%d",
 		      max_tasks, whole_nodes, whole_sockets ,part_sockets,
 		      whole_cores, part_cores, whole_threads);
-
-		if ((max_tasks == whole_sockets) && (part_sockets == 0)) {
+		if ((req->job_core_spec != (uint16_t) NO_VAL) &&
+		    (req->job_core_spec &  CORE_SPEC_THREAD)  &&
+		    (req->job_core_spec != CORE_SPEC_THREAD)) {
+			spec_thread_cnt = req->job_core_spec &
+					  (~CORE_SPEC_THREAD);
+		}
+		if (((max_tasks == whole_sockets) && (part_sockets == 0)) ||
+		    (spec_thread_cnt &&
+		     (max_tasks == (whole_sockets + part_sockets)))) {
 			req->cpu_bind_type |= CPU_BIND_TO_SOCKETS;
 			goto make_auto;
 		}
-		if ((max_tasks == whole_cores) && (part_cores == 0)) {
+		if (((max_tasks == whole_cores) && (part_cores == 0)) ||
+		    (spec_thread_cnt &&
+		     (max_tasks == (whole_cores + part_cores)))) {
 			req->cpu_bind_type |= CPU_BIND_TO_CORES;
 			goto make_auto;
 		}
@@ -431,11 +460,27 @@ void lllp_distribution(launch_tasks_request_msg_t *req, uint32_t node_id)
 			req->cpu_bind_type |= CPU_BIND_TO_THREADS;
 			goto make_auto;
 		}
+
+		if (task_plugin_param & CPU_AUTO_BIND_TO_THREADS) {
+			auto_def_set = true;
+			req->cpu_bind_type |= CPU_BIND_TO_THREADS;
+			goto make_auto;
+		} else if (task_plugin_param & CPU_AUTO_BIND_TO_CORES) {
+			auto_def_set = true;
+			req->cpu_bind_type |= CPU_BIND_TO_CORES;
+			goto make_auto;
+		} else if (task_plugin_param & CPU_AUTO_BIND_TO_SOCKETS) {
+			auto_def_set = true;
+			req->cpu_bind_type |= CPU_BIND_TO_SOCKETS;
+			goto make_auto;
+		}
+
 		if (avail_mask) {
 			xfree(req->cpu_bind);
 			req->cpu_bind = avail_mask;
 			req->cpu_bind_type |= CPU_BIND_MASK;
 		}
+
 		slurm_sprint_cpu_bind_type(buf_type, req->cpu_bind_type);
 		info("lllp_distribution jobid [%u] auto binding off: %s",
 		     req->job_id, buf_type);
@@ -443,8 +488,10 @@ void lllp_distribution(launch_tasks_request_msg_t *req, uint32_t node_id)
 
   make_auto:	xfree(avail_mask);
 		slurm_sprint_cpu_bind_type(buf_type, req->cpu_bind_type);
-		info("lllp_distribution jobid [%u] implicit auto binding: "
-		     "%s, dist %d", req->job_id, buf_type, req->task_dist);
+		info("lllp_distribution jobid [%u] %s auto binding: "
+		     "%s, dist %d", req->job_id,
+		     (auto_def_set) ? "default" : "implicit",
+		     buf_type, req->task_dist);
 	} else {
 		/* Explicit bind unit (sockets, cores) specified by user */
 		slurm_sprint_cpu_bind_type(buf_type, req->cpu_bind_type);
@@ -452,7 +499,7 @@ void lllp_distribution(launch_tasks_request_msg_t *req, uint32_t node_id)
 		     req->job_id, buf_type, req->task_dist);
 	}
 
-	switch (req->task_dist) {
+	switch (req->task_dist & SLURM_DIST_STATE_BASE) {
 	case SLURM_DIST_BLOCK_BLOCK:
 	case SLURM_DIST_CYCLIC_BLOCK:
 	case SLURM_DIST_PLANE:
@@ -618,6 +665,26 @@ static char *_alloc_mask(launch_tasks_request_msg_t *req,
 		(*whole_node_cnt)++;
 	FREE_NULL_BITMAP(alloc_bitmap);
 
+	if ((req->job_core_spec != (uint16_t) NO_VAL) &&
+	    (req->job_core_spec &  CORE_SPEC_THREAD)  &&
+	    (req->job_core_spec != CORE_SPEC_THREAD)) {
+		int spec_thread_cnt;
+		spec_thread_cnt = req->job_core_spec & (~CORE_SPEC_THREAD);
+		for (t = threads - 1;
+		     ((t > 0) && (spec_thread_cnt > 0)); t--) {
+			for (c = cores - 1;
+			     ((c > 0) && (spec_thread_cnt > 0)); c--) {
+				for (s = sockets - 1;
+				     ((s >= 0) && (spec_thread_cnt > 0)); s--) {
+					i = s * cores + c;
+					i = (i * threads) + t;
+					bit_clear(alloc_mask, i);
+					spec_thread_cnt--;
+				}
+			}
+		}
+	}
+
 	/* translate abstract masks to actual hardware layout */
 	_lllp_map_abstract_masks(1, &alloc_mask);
 
@@ -651,6 +718,7 @@ static bitstr_t *_get_avail_map(launch_tasks_request_msg_t *req,
 	int job_node_id;
 	int start;
 	char *str;
+	int spec_thread_cnt = 0;
 
 	*hw_sockets = conf->sockets;
 	*hw_cores   = conf->cores;
@@ -688,7 +756,7 @@ static bitstr_t *_get_avail_map(launch_tasks_request_msg_t *req,
 	}
 
 	str = (char *)bit_fmt_hexmask(req_map);
-	debug3("task/affinity: job %u.%u CPU mask from slurmctld: %s",
+	debug3("task/affinity: job %u.%u core mask from slurmctld: %s",
 		req->job_id, req->job_step_id, str);
 	xfree(str);
 
@@ -710,6 +778,29 @@ static bitstr_t *_get_avail_map(launch_tasks_request_msg_t *req,
 		}
 	}
 
+	if ((req->job_core_spec != (uint16_t) NO_VAL) &&
+	    (req->job_core_spec &  CORE_SPEC_THREAD)  &&
+	    (req->job_core_spec != CORE_SPEC_THREAD)) {
+		spec_thread_cnt = req->job_core_spec & (~CORE_SPEC_THREAD);
+	}
+	if (spec_thread_cnt) {
+		/* Skip specialized threads as needed */
+		int i, t, c, s;
+		for (t = conf->threads - 1;
+		     ((t >= 0) && (spec_thread_cnt > 0)); t--) {
+			for (c = conf->cores - 1;
+			     ((c >= 0) && (spec_thread_cnt > 0)); c--) {
+				for (s = conf->sockets - 1;
+				     ((s >= 0) && (spec_thread_cnt > 0)); s--) {
+					i = s * conf->cores + c;
+					i = (i * conf->threads) + t;
+					bit_clear(hw_map, i);
+					spec_thread_cnt--;
+				}
+			}
+		}
+	}
+
 	str = (char *)bit_fmt_hexmask(hw_map);
 	debug3("task/affinity: job %u.%u CPU final mask for local node: %s",
 		req->job_id, req->job_step_id, str);
@@ -721,9 +812,9 @@ static bitstr_t *_get_avail_map(launch_tasks_request_msg_t *req,
 }
 
 /* helper function for _expand_masks() */
-static void _blot_mask(bitstr_t *mask, uint16_t blot)
+static void _blot_mask(bitstr_t *mask, bitstr_t *avail_map, uint16_t blot)
 {
-	uint16_t i, size = 0;
+	uint16_t i, j, size = 0;
 	int prev = -1;
 
 	if (!mask)
@@ -734,7 +825,10 @@ static void _blot_mask(bitstr_t *mask, uint16_t blot)
 			/* fill in this blot */
 			uint16_t start = (i / blot) * blot;
 			if (start != prev) {
-				bit_nset(mask, start, start+blot-1);
+				for (j = start; j < start + blot; j++) {
+					if (bit_test(avail_map, j))
+						bit_set(mask, j);
+				}
 				prev = start;
 			}
 		}
@@ -787,7 +881,7 @@ static void _expand_masks(uint16_t cpu_bind_type, const uint32_t maxtasks,
 		if (hw_threads < 2)
 			return;
 		for (i = 0; i < maxtasks; i++) {
-			_blot_mask(masks[i], hw_threads);
+			_blot_mask(masks[i], avail_map, hw_threads);
 		}
 		return;
 	}
@@ -876,7 +970,32 @@ static int _task_layout_lllp_cyclic(launch_tasks_request_msg_t *req,
 		last_taskcount = taskcount;
 		for (i = 0; i < size; i++) {
 			bool already_switched = false;
-			uint16_t bit = socket_last_pu[s] + (s * offset);
+			uint16_t bit;
+			uint16_t orig_s = s;
+
+			while (socket_last_pu[s] >= offset) {
+				/* Switch to the next socket we have
+				 * ran out here. */
+
+				/* This only happens if the slurmctld
+				 * gave us an allocation that made a
+				 * task split sockets.  Or if the
+				 * entire allocation is on one socket.
+				 */
+				s = (s + 1) % hw_sockets;
+				if (orig_s == s) {
+					/* This should rarely happen,
+					 * but is here for sanity sake.
+					 */
+					debug("allocation is full, "
+					      "oversubscribing");
+					memset(socket_last_pu, 0,
+					       sizeof(hw_sockets
+						      * sizeof(int)));
+				}
+			}
+
+			bit = socket_last_pu[s] + (s * offset);
 
 			/* In case hardware and config differ */
 			bit %= size;
@@ -886,17 +1005,6 @@ static int _task_layout_lllp_cyclic(launch_tasks_request_msg_t *req,
 			/* skip unrequested threads */
 			if (req->cpu_bind_type & CPU_BIND_ONE_THREAD_PER_CORE)
 				socket_last_pu[s] += hw_threads-1;
-			if (socket_last_pu[s] >= offset) {
-				/* Switch to the next socket we have
-				 * ran out here. */
-
-				/* This only happens if the slurmctld
-				   gave us an allocation that made a
-				   task split sockets.
-				*/
-				s = (s + 1) % hw_sockets;
-				already_switched = true;
-			}
 
 			if (!bit_test(avail_map, bit))
 				continue;
@@ -908,9 +1016,11 @@ static int _task_layout_lllp_cyclic(launch_tasks_request_msg_t *req,
 			//info("setting %d %d", taskcount, bit);
 			bit_set(masks[taskcount], bit);
 
-			if (!already_switched
-			    && ((req->task_dist == SLURM_DIST_CYCLIC_CFULL) ||
-				(req->task_dist == SLURM_DIST_BLOCK_CFULL))) {
+			if (!already_switched &&
+			    (((req->task_dist & SLURM_DIST_STATE_BASE) ==
+			     SLURM_DIST_CYCLIC_CFULL) ||
+			    ((req->task_dist & SLURM_DIST_STATE_BASE) ==
+			     SLURM_DIST_BLOCK_CFULL))) {
 				/* This means we are laying out cpus
 				 * within a task cyclically as well. */
 				s = (s + 1) % hw_sockets;
@@ -919,6 +1029,27 @@ static int _task_layout_lllp_cyclic(launch_tasks_request_msg_t *req,
 
 			if (++p < req->cpus_per_task)
 				continue;
+
+			/* Means we are binding to cores so skip the
+			   rest of the threads in this one.  If a user
+			   requests ntasks-per-core=1 and the
+			   cpu_bind=threads this will not be able to
+			   work since we don't know how many tasks per
+			   core have been allocated.
+			*/
+			if (!(req->cpu_bind_type & CPU_BIND_ONE_THREAD_PER_CORE)
+			    && ((req->cpu_bind_type & CPU_BIND_TO_CORES)
+				|| (slurm_get_select_type_param() &
+				    CR_ONE_TASK_PER_CORE))) {
+				int threads_not_used;
+				if (req->cpus_per_task < hw_threads)
+					threads_not_used =
+						hw_threads - req->cpus_per_task;
+				else
+					threads_not_used =
+						req->cpus_per_task % hw_threads;
+				socket_last_pu[s] += threads_not_used;
+			}
 			p = 0;
 
 			if (!already_switched) {
@@ -997,12 +1128,19 @@ static int _task_layout_lllp_block(launch_tasks_request_msg_t *req,
 	}
 	size = bit_size(avail_map);
 
+	if ((req->cpu_bind_type & CPU_BIND_ONE_THREAD_PER_CORE) &&
+	    (max_cpus > (hw_sockets * hw_cores))) {
+		/* More CPUs requested than available cores,
+		 * disable core-level binding */
+		req->cpu_bind_type &= (~CPU_BIND_ONE_THREAD_PER_CORE);
+	}
+
 	*masks_p = xmalloc(max_tasks * sizeof(bitstr_t*));
 	masks = *masks_p;
 
 	/* block distribution with oversubsciption */
 	c = 0;
-	while(taskcount < max_tasks) {
+	while (taskcount < max_tasks) {
 		if (taskcount == last_taskcount) {
 			fatal("_task_layout_lllp_block infinite loop");
 		}
@@ -1023,10 +1161,30 @@ static int _task_layout_lllp_block(launch_tasks_request_msg_t *req,
 
 			/* skip unrequested threads */
 			if (req->cpu_bind_type & CPU_BIND_ONE_THREAD_PER_CORE)
-				i += hw_threads-1;
+				i += hw_threads - 1;
 
 			if (++c < req->cpus_per_task)
 				continue;
+			/* Means we are binding to cores so skip the
+			   rest of the threads in this one.  If a user
+			   requests ntasks-per-core=1 and the
+			   cpu_bind=threads this will not be able to
+			   work since we don't know how many tasks per
+			   core have been allocated.
+			*/
+			if (!(req->cpu_bind_type & CPU_BIND_ONE_THREAD_PER_CORE)
+			    && ((req->cpu_bind_type & CPU_BIND_TO_CORES)
+				|| (slurm_get_select_type_param() &
+				    CR_ONE_TASK_PER_CORE))) {
+				int threads_not_used;
+				if (req->cpus_per_task < hw_threads)
+					threads_not_used =
+						hw_threads - req->cpus_per_task;
+				else
+					threads_not_used =
+						req->cpus_per_task % hw_threads;
+				i += threads_not_used;
+			}
 			c = 0;
 			if (++taskcount >= max_tasks)
 				break;

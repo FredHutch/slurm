@@ -246,27 +246,48 @@ static void * _service_connection(void *arg)
 			fini = true;
 		}
 
-		rc = _send_resp(conn->newsockfd, buffer);
+		(void) _send_resp(conn->newsockfd, buffer);
 		xfree(msg);
 	}
 
-	if (conn->ctld_port && !shutdown_time) {
-		slurmdb_cluster_rec_t cluster_rec;
-		memset(&cluster_rec, 0, sizeof(slurmdb_cluster_rec_t));
-		cluster_rec.name = conn->cluster_name;
-		cluster_rec.control_host = conn->ip;
-		cluster_rec.control_port = conn->ctld_port;
-		cluster_rec.cpu_count = conn->cluster_cpus;
-		debug("cluster %s has disconnected", conn->cluster_name);
-		clusteracct_storage_g_fini_ctld(conn->db_conn, &cluster_rec);
+	if (conn->ctld_port) {
+		if (!shutdown_time) {
+			slurmdb_cluster_rec_t cluster_rec;
+			ListIterator itr;
+			slurmdbd_conn_t *slurmdbd_conn;
+			memset(&cluster_rec, 0, sizeof(slurmdb_cluster_rec_t));
+			cluster_rec.name = conn->cluster_name;
+			cluster_rec.control_host = conn->ip;
+			cluster_rec.control_port = conn->ctld_port;
+			cluster_rec.tres_str = conn->tres_str;
+			debug("cluster %s has disconnected",
+			      conn->cluster_name);
+
+			clusteracct_storage_g_fini_ctld(
+				conn->db_conn, &cluster_rec);
+
+			slurm_mutex_lock(&registered_lock);
+			itr = list_iterator_create(registered_clusters);
+			while ((slurmdbd_conn = list_next(itr))) {
+				if (conn == slurmdbd_conn) {
+					list_delete_item(itr);
+					break;
+				}
+			}
+			list_iterator_destroy(itr);
+			slurm_mutex_unlock(&registered_lock);
+		}
+		/* needs to be the last thing done */
+		acct_storage_g_commit(conn->db_conn, 1);
 	}
 
 	acct_storage_g_close_connection(&conn->db_conn);
-	if (slurm_close_accepted_conn(conn->newsockfd) < 0)
+	if (slurm_close(conn->newsockfd) < 0)
 		error("close(%d): %m(%s)",  conn->newsockfd, conn->ip);
 	else
 		debug2("Closed connection %d uid(%d)", conn->newsockfd, uid);
 
+	xfree(conn->tres_str);
 	xfree(conn->cluster_name);
 	xfree(conn);
 	_free_server_thread(pthread_self());
@@ -518,7 +539,7 @@ static void _free_server_thread(pthread_t my_tid)
  * After one second, start sending SIGKILL to the threads. */
 static void _wait_for_thread_fini(void)
 {
-	int i, j;
+	int j;
 
 	if (thread_count == 0)
 		return;
@@ -532,8 +553,15 @@ static void _wait_for_thread_fini(void)
 		pthread_kill(slave_thread_id[j], SIGUSR1);
 	}
 	slurm_mutex_unlock(&thread_count_lock);
-	usleep(100000);	/* Give the threads 100 msec to clean up */
 
+	/* Can't send SIGKILL to threads as it goes to the process. Since this
+	 * is called only when the rpc_mgr is quitting, just let the threads die
+	 * by the dbd dying.  If it's the backup and it's giving up control, let
+	 * the threads finish. thread_count will be decremented when the thread
+	 * finishes -- even if the rpc_mgr is gone.
+	 */
+	/*usleep(100000); */	/* Give the threads 100 msec to clean up */
+	/*
 	for (i=0; ; i++) {
 		if (thread_count == 0)
 			return;
@@ -555,6 +583,7 @@ static void _wait_for_thread_fini(void)
 		slurm_mutex_unlock(&thread_count_lock);
 		sleep(1);
 	}
+	*/
 }
 
 static void _sig_handler(int signal)

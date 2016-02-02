@@ -122,7 +122,7 @@ static void _push_to_hashtbl(pid_t ppid, pid_t pid,
 	hashtbl[idx] = newppid;
 }
 
-static int get_myname(char *s)
+static int _get_myname(char *s)
 {
 	char path[PATH_MAX], rbuf[1024];
 	int fd;
@@ -160,7 +160,8 @@ static xppid_t **_build_hashtbl(void)
 		error("opendir(/proc): %m");
 		return NULL;
 	}
-	if (get_myname(myname) < 0) return NULL;
+	if (_get_myname(myname) < 0)
+		return NULL;
 	debug3("Myname in build_hashtbl: %s", myname);
 
 	hashtbl = (xppid_t **)xmalloc(HASH_LEN * sizeof(xppid_t *));
@@ -171,8 +172,7 @@ static xppid_t **_build_hashtbl(void)
 		if ((num[0] < '0') || (num[0] > '9'))
 			continue;
 		ret_l = strtol(num, &endptr, 10);
-		if ((ret_l == LONG_MIN) || (ret_l == LONG_MAX) ||
-		    (errno == ERANGE)) {
+		if ((ret_l == LONG_MIN) || (ret_l == LONG_MAX)) {
 			error("couldn't do a strtol on str %s(%ld): %m",
 			      num, ret_l);
 			continue;
@@ -377,7 +377,7 @@ extern int proctrack_linuxproc_get_pids(pid_t top, pid_t **pids, int *npids)
 	p = (pid_t *)xmalloc(sizeof(pid_t) * len);
 	ptr = list;
 	i = 0;
-	while(ptr != NULL) {
+	while (ptr != NULL) {
 		if (ptr->is_usercmd) { /* don't include the slurmstepd */
 			if (i >= len-1) {
 				len *= 2;

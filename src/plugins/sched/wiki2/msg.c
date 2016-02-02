@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  msg.c - Message/communcation manager for Wiki plugin
+ *  msg.c - Message/communication manager for Wiki plugin
  *****************************************************************************
  *  Copyright (C) 2006-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2009 Lawrence Livermore National Security.
@@ -89,10 +89,10 @@ extern int spawn_msg_thread(void)
 {
 	pthread_attr_t thread_attr_msg;
 
-	pthread_mutex_lock( &thread_flag_mutex );
+	slurm_mutex_lock( &thread_flag_mutex );
 	if (thread_running) {
 		error("Wiki thread already running, not starting another");
-		pthread_mutex_unlock(&thread_flag_mutex);
+		slurm_mutex_unlock(&thread_flag_mutex);
 		return SLURM_ERROR;
 	}
 
@@ -105,7 +105,7 @@ extern int spawn_msg_thread(void)
 	(void) event_notify(1235, "Slurm startup");
 	slurm_attr_destroy(&thread_attr_msg);
 	thread_running = true;
-	pthread_mutex_unlock(&thread_flag_mutex);
+	slurm_mutex_unlock(&thread_flag_mutex);
 	return SLURM_SUCCESS;
 }
 
@@ -114,7 +114,7 @@ extern int spawn_msg_thread(void)
 \*****************************************************************************/
 extern void term_msg_thread(void)
 {
-	pthread_mutex_lock(&thread_flag_mutex);
+	slurm_mutex_lock(&thread_flag_mutex);
 	if (thread_running) {
 		int fd;
 		slurm_addr_t addr;
@@ -127,10 +127,10 @@ extern void term_msg_thread(void)
 		 * flag.
 		 */
 		slurm_set_addr(&addr, sched_port, "localhost");
-		fd = slurm_open_stream(&addr);
+		fd = slurm_open_stream(&addr, true);
 		if (fd != -1) {
 			/* we don't care if the open failed */
-			slurm_close_stream(fd);
+			slurm_close(fd);
 		}
 
 		debug2("waiting for sched/wiki2 thread to exit");
@@ -140,7 +140,7 @@ extern void term_msg_thread(void)
 		thread_running = false;
 		debug2("join of sched/wiki2 thread was successful");
 	}
-	pthread_mutex_unlock(&thread_flag_mutex);
+	slurm_mutex_unlock(&thread_flag_mutex);
 }
 
 /*****************************************************************************\
@@ -202,7 +202,7 @@ static void *_msg_thread(void *no_data)
 			_proc_msg(new_fd, msg);
 			xfree(msg);
 		}
-		slurm_close_accepted_conn(new_fd);
+		slurm_close(new_fd);
 	}
 	verbose("wiki: message engine shutdown");
 	if (sock_fd > 0)

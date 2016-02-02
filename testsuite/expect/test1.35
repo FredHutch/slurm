@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Test of batch job with multiple concurrent job steps
@@ -48,7 +48,7 @@ if {[test_bluegene]} {
 	exit $exit_code
 }
 if {[test_alps]} {
-	send_user "\nWARNING: This test is incompatible with Cray systems\n"
+	send_user "\nWARNING: This test is incompatible with Cray/ALPS systems\n"
 	exit $exit_code
 }
 
@@ -58,7 +58,7 @@ set step_mem_opt "--comment=no_mem"
 spawn -noecho $bin_bash -c "exec $scontrol show config | $bin_grep SelectTypeParameters"
 expect {
 	-re "MEMORY" {
-		set job_mem_opt  "--mem-per-cpu=64"
+		set job_mem_opt  "--mem-per-cpu=256"
 		set step_mem_opt "--mem-per-cpu=2"
 		exp_continue
 	}
@@ -73,7 +73,7 @@ log_user 1
 # Build input script file
 # Sleep between initiation of job steps to avoid overwhelming slurmd
 #
-# NOTE: Explicity set a small memory limit. Without explicitly setting the step
+# NOTE: Explicitly set a small memory limit. Without explicitly setting the step
 #   memory limit, it will use the system default (same as the job) which may
 #   prevent the level of parallelism desired.
 #
@@ -99,10 +99,10 @@ if { [test_xcpu] } {
 	set node_cnt 1-4
 }
 
-set srun_pid [spawn $sbatch -N$node_cnt --output=$file_out --error=$file_err -t1 $job_mem_opt $file_in]
+set srun_pid [eval spawn $sbatch -N$node_cnt --output=$file_out --error=$file_err -t1 --gres=craynetwork:0 $job_mem_opt $file_in]
 expect {
 	-re "Requested node configuration is not available" {
-		send_user "\nFAILURE: Memory is allocated, but your nodes don't have even 32MB configured\n"
+		send_user "\nFAILURE: Memory is allocated, but your nodes don't have even 256MB configured\n"
 		set exit_code 1
 	}
 	-re "Submitted batch job ($number)" {
@@ -127,6 +127,7 @@ if {$job_id == 0} {
 #
 # Wait for job to complete
 #
+sleep 30
 if {[wait_for_job $job_id "DONE"] != 0} {
 	send_user "\nFAILURE: waiting for job to complete\n"
 	cancel_job $job_id

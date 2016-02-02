@@ -72,7 +72,7 @@
 
 /* Collection of data for printing reports. Like data is combined here */
 typedef struct {
-	uint16_t node_state;
+	uint32_t node_state;
 
 	uint32_t nodes_alloc;
 	uint32_t nodes_idle;
@@ -100,11 +100,15 @@ typedef struct {
 	uint32_t max_weight;
 	uint32_t min_cpu_load;
 	uint32_t max_cpu_load;
+	uint32_t min_free_mem;
+	uint32_t max_free_mem;
 
 	uint32_t max_cpus_per_node;
+	uint32_t alloc_memory;
 
 	char *version;
 	char *features;
+	char *features_act;
 	char *gres;
 	char *reason;
 	time_t reason_time;
@@ -124,6 +128,7 @@ typedef struct {
 /* Identify what fields must match for a node's information to be
  * combined into a single sinfo_data entry based upon output format */
 struct sinfo_match_flags {
+	bool alloc_mem_flag;
 	bool avail_flag;
 	bool cpus_flag;
 	bool sockets_flag;
@@ -132,6 +137,7 @@ struct sinfo_match_flags {
 	bool sct_flag;
 	bool disk_flag;
 	bool features_flag;
+	bool features_act_flag;
 	bool groups_flag;
 	bool gres_flag;
 	bool hostnames_flag;
@@ -151,6 +157,7 @@ struct sinfo_match_flags {
 	bool reason_timestamp_flag;
 	bool reason_user_flag;
 	bool cpu_load_flag;
+	bool free_mem_flag;
 	bool max_cpus_per_node_flag;
 	bool version_flag;
 };
@@ -160,6 +167,7 @@ struct sinfo_parameters {
 	bool all_flag;
 	List clusters;
 	uint32_t cluster_flags;
+	uint32_t convert_flags;
 	bool bg_flag;
 	bool dead_nodes;
 	bool exact_match;
@@ -187,6 +195,7 @@ struct sinfo_parameters {
 	int part_field_size;
 	int verbose;
 
+	List  part_list;
 	List  format_list;
 	List  state_list;
 };

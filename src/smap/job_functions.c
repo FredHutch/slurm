@@ -43,9 +43,6 @@
 #include "src/common/parse_time.h"
 #include "src/smap/smap.h"
 
-static int  _get_node_cnt(job_info_t * job);
-static int  _max_cpus_per_node(void);
-static int  _nodes_in_list(char *node_list);
 static void _print_header_job(void);
 static int  _print_text_job(job_info_t * job_ptr);
 
@@ -208,7 +205,7 @@ static void _print_header_job(void)
 		main_xcord += 3;
 		mvwprintw(text_win, main_ycord,
 			  main_xcord, "JOBID");
-		main_xcord += 8;
+		main_xcord += 19;
 		mvwprintw(text_win, main_ycord,
 			  main_xcord, "PARTITION");
 		main_xcord += 10;
@@ -308,11 +305,12 @@ static int _print_text_job(job_info_t * job_ptr)
 		node_cnt = job_ptr->num_nodes;
 
 	if ((node_cnt  == 0) || (node_cnt == NO_VAL))
-		node_cnt = _get_node_cnt(job_ptr);
+		node_cnt = job_ptr->num_nodes;
 
 	if (params.cluster_flags & CLUSTER_FLAG_BG)
 		convert_num_unit((float)node_cnt, tmp_cnt,
-				 sizeof(tmp_cnt), UNIT_NONE);
+				 sizeof(tmp_cnt), UNIT_NONE,
+				 CONVERT_NUM_UNIT_EXACT);
 	else
 		snprintf(tmp_cnt, sizeof(tmp_cnt), "%d", node_cnt);
 
@@ -320,9 +318,21 @@ static int _print_text_job(job_info_t * job_ptr)
 		mvwprintw(text_win, main_ycord,
 			  main_xcord, "%c", job_ptr->num_cpus);
 		main_xcord += 3;
-		mvwprintw(text_win, main_ycord,
-			  main_xcord, "%d", job_ptr->job_id);
-		main_xcord += 8;
+		if (job_ptr->array_task_str) {
+			mvwprintw(text_win, main_ycord,
+				  main_xcord, "%u_[%s]",
+				  job_ptr->array_job_id,
+				  job_ptr->array_task_str);
+		} else if (job_ptr->array_task_id != NO_VAL) {
+			mvwprintw(text_win, main_ycord,
+				  main_xcord, "%u_%u (%u)",
+				  job_ptr->array_job_id,
+				  job_ptr->array_task_id, job_ptr->job_id);
+		} else {
+			mvwprintw(text_win, main_ycord,
+				  main_xcord, "%u", job_ptr->job_id);
+		}
+		main_xcord += 19;
 		mvwprintw(text_win, main_ycord,
 			  main_xcord, "%.10s", job_ptr->partition);
 		main_xcord += 10;
@@ -345,10 +355,9 @@ static int _print_text_job(job_info_t * job_ptr)
 					  SELECT_PRINT_DATA));
 			main_xcord += 18;
 		}
-		uname = uid_to_string((uid_t) job_ptr->user_id);
+		uname = uid_to_string_cached((uid_t) job_ptr->user_id);
 		mvwprintw(text_win, main_ycord,
 			  main_xcord, "%.8s", uname);
-		xfree(uname);
 		main_xcord += 9;
 		mvwprintw(text_win, main_ycord,
 			  main_xcord, "%.9s", job_ptr->name);
@@ -423,9 +432,8 @@ static int _print_text_job(job_info_t * job_ptr)
 				       job_ptr->select_jobinfo,
 				       time_buf, sizeof(time_buf),
 				       SELECT_PRINT_DATA));
-		uname = uid_to_string((uid_t) job_ptr->user_id);
+		uname = uid_to_string_cached((uid_t) job_ptr->user_id);
 		printf("%8.8s ", uname);
-		xfree(uname);
 		printf("%6.6s ", job_ptr->name);
 		printf("%2.2s ",
 		       job_state_string_compact(job_ptr->job_state));
@@ -452,53 +460,3 @@ static int _print_text_job(job_info_t * job_ptr)
 
 	return printed;
 }
-
-static int _get_node_cnt(job_info_t * job)
-{
-	int node_cnt = 0, round;
-	bool completing = job->job_state & JOB_COMPLETING;
-	uint16_t base_job_state = job->job_state & (~JOB_COMPLETING);
-	static int max_cpus = 0;
-
-	if (base_job_state == JOB_PENDING || completing) {
-		if (max_cpus == 0)
-			max_cpus = _max_cpus_per_node();
-
-		node_cnt = _nodes_in_list(job->req_nodes);
-		node_cnt = MAX(node_cnt, job->num_nodes);
-		round  = job->num_cpus + max_cpus - 1;
-		round /= max_cpus;      /* round up */
-		node_cnt = MAX(node_cnt, round);
-	} else
-		node_cnt = _nodes_in_list(job->nodes);
-	return node_cnt;
-}
-
-static int _nodes_in_list(char *node_list)
-{
-	hostset_t host_set = hostset_create(node_list);
-	int count = hostset_count(host_set);
-	hostset_destroy(host_set);
-	return count;
-}
-
-/* Return the maximum number of processors for any node in the cluster */
-static int   _max_cpus_per_node(void)
-{
-	int error_code, max_cpus = 1;
-	node_info_msg_t *node_info_ptr = NULL;
-
-	error_code = slurm_load_node ((time_t) NULL, &node_info_ptr,
-				      params.all_flag ? 1 : 0);
-	if (error_code == SLURM_SUCCESS) {
-		int i;
-		node_info_t *node_ptr = node_info_ptr->node_array;
-		for (i=0; i<node_info_ptr->record_count; i++) {
-			max_cpus = MAX(max_cpus, node_ptr[i].cpus);
-		}
-		slurm_free_node_info_msg (node_info_ptr);
-	}
-
-	return max_cpus;
-}
-

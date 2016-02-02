@@ -122,17 +122,14 @@ static slurm_errtab_t slurm_errtab[] = {
  * of how this plugin satisfies that application.  SLURM will only load
  * a switch plugin if the plugin_type string has a prefix of "switch/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as this API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]        = "switch NRT plugin";
 const char plugin_type[]        = "switch/nrt";
-const uint32_t plugin_version   = 110;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
-uint32_t debug_flags = 0;
+uint64_t debug_flags = 0;
 
 /*
  * init() is called when the plugin is loaded, before any other functions
@@ -140,7 +137,7 @@ uint32_t debug_flags = 0;
  */
 extern int init ( void )
 {
-	verbose("%s loaded", plugin_name);
+	debug("%s loaded", plugin_name);
 	debug_flags = slurm_get_debug_flags();
 
 	return SLURM_SUCCESS;

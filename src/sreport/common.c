@@ -39,6 +39,7 @@
 \*****************************************************************************/
 
 #include "sreport.h"
+#include "src/common/proc_args.h"
 
 extern void slurmdb_report_print_time(print_field_t *field, uint64_t value,
 				      uint64_t total_time, int last)
@@ -134,6 +135,18 @@ extern int parse_option_end(char *option)
 		return 0;
 	end++;
 	return end;
+}
+
+
+/* Do not allow the endtime request for sreport to exceed 'now'. */
+extern time_t sanity_check_endtime(time_t endtime)
+{
+	time_t now = time(NULL);
+
+	if (endtime > now)
+		endtime = now;
+
+	return endtime;
 }
 
 /* you need to xfree whatever is sent from here */
@@ -237,15 +250,32 @@ extern int sort_user_dec(void *v1, void *v2)
 	slurmdb_report_user_rec_t *user_a;
 	slurmdb_report_user_rec_t *user_b;
 	int diff;
+	/* FIXME : this only works for CPUs now */
+	int tres_id = TRES_CPU;
 
-	diff = 0;
 	user_a = *(slurmdb_report_user_rec_t **)v1;
 	user_b = *(slurmdb_report_user_rec_t **)v2;
 
 	if (sort_flag == SLURMDB_REPORT_SORT_TIME) {
-		if (user_a->cpu_secs > user_b->cpu_secs)
+		slurmdb_tres_rec_t *tres_a, *tres_b;
+
+		if (!user_a->tres_list || !user_b->tres_list)
+			return 0;
+
+		if (!(tres_a = list_find_first(user_a->tres_list,
+					       slurmdb_find_tres_in_list,
+					       &tres_id)))
+			return 1;
+
+		if (!(tres_b = list_find_first(user_b->tres_list,
+					       slurmdb_find_tres_in_list,
+					       &tres_id)))
 			return -1;
-		else if (user_a->cpu_secs < user_b->cpu_secs)
+
+
+		if (tres_a->alloc_secs > tres_b->alloc_secs)
+			return -1;
+		else if (tres_a->alloc_secs < tres_b->alloc_secs)
 			return 1;
 	}
 
@@ -273,7 +303,7 @@ extern int sort_user_dec(void *v1, void *v2)
  */
 extern int sort_cluster_dec(void *v1, void *v2)
 {
-	int diff = 0;
+	int diff;
 	slurmdb_report_cluster_rec_t *cluster_a;
 	slurmdb_report_cluster_rec_t *cluster_b;
 
@@ -305,7 +335,7 @@ extern int sort_cluster_dec(void *v1, void *v2)
  */
 extern int sort_assoc_dec(void *v1, void *v2)
 {
-	int diff = 0;
+	int diff;
 	slurmdb_report_assoc_rec_t *assoc_a;
 	slurmdb_report_assoc_rec_t *assoc_b;
 
@@ -346,7 +376,7 @@ extern int sort_assoc_dec(void *v1, void *v2)
  */
 extern int sort_reservations_dec(void *v1, void *v2)
 {
-	int diff = 0;
+	int diff;
 	slurmdb_reservation_rec_t *resv_a;
 	slurmdb_reservation_rec_t *resv_b;
 
@@ -405,3 +435,34 @@ extern int get_uint(char *in_value, uint32_t *out_value, char *type)
 	return SLURM_SUCCESS;
 }
 
+extern void sreport_set_tres_recs(slurmdb_tres_rec_t **cluster_tres_rec,
+				  slurmdb_tres_rec_t **tres_rec,
+				  List cluster_tres_list, List tres_list,
+				  slurmdb_tres_rec_t *tres_rec_in)
+{
+	if (!(*cluster_tres_rec = list_find_first(cluster_tres_list,
+						  slurmdb_find_tres_in_list,
+						  &tres_rec_in->id))) {
+		debug2("No cluster TRES %s%s%s(%d)",
+		       tres_rec_in->type,
+		       tres_rec_in->name ? "/" : "",
+		       tres_rec_in->name ? tres_rec_in->name : "",
+		       tres_rec_in->id);
+	}
+
+	if (!(*tres_rec = list_find_first(tres_list,
+					  slurmdb_find_tres_in_list,
+					  &tres_rec_in->id))) {
+		debug2("No TRES %s%s%s(%d)",
+		       tres_rec_in->type,
+		       tres_rec_in->name ? "/" : "",
+		       tres_rec_in->name ? tres_rec_in->name : "",
+		       tres_rec_in->id);
+	} else if (!(*tres_rec)->alloc_secs) {
+		debug2("No TRES %s%s%s(%d) usage",
+		       tres_rec_in->type,
+		       tres_rec_in->name ? "/" : "",
+		       tres_rec_in->name ? tres_rec_in->name : "",
+		       tres_rec_in->id);
+	}
+}

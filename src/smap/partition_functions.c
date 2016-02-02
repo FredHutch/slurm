@@ -166,8 +166,6 @@ extern void get_slurm_part(void)
 		count++;
 
 	}
-	if (count == 128)
-		count = 0;
 	if (params.commandline && params.iterate)
 		printf("\n");
 
@@ -372,7 +370,7 @@ extern void get_bg_part(void)
 			}
 			list_iterator_destroy(itr);
 		}
-		list_destroy(nodelist);
+		FREE_NULL_LIST(nodelist);
 	}
 
 	/* Report the BG Blocks */
@@ -559,7 +557,8 @@ static int _print_text_part(partition_info_t *part_ptr,
 
 	if (params.cluster_flags & CLUSTER_FLAG_BG)
 		convert_num_unit((float)part_ptr->total_nodes, tmp_cnt,
-				 sizeof(tmp_cnt), UNIT_NONE);
+				 sizeof(tmp_cnt), UNIT_NONE,
+				 CONVERT_NUM_UNIT_EXACT);
 	else
 		snprintf(tmp_cnt, sizeof(tmp_cnt), "%u", part_ptr->total_nodes);
 
@@ -812,12 +811,8 @@ static void _block_list_del(void *object)
 		xfree(block_ptr->slurm_part_name);
 		xfree(block_ptr->mp_str);
 		xfree(block_ptr->ionode_str);
-		if (block_ptr->nodelist)
-			list_destroy(block_ptr->nodelist);
-		if (block_ptr->job_list) {
-			list_destroy(block_ptr->job_list);
-			block_ptr->job_list = NULL;
-		}
+		FREE_NULL_LIST(block_ptr->nodelist);
+		FREE_NULL_LIST(block_ptr->job_list);
 		xfree(block_ptr);
 
 	}
@@ -950,6 +945,9 @@ static int _make_nodelist(char *nodes, List nodelist)
 
 	if (!nodelist)
 		nodelist = list_create(_nodelist_del);
+
+	memset(start, params.cluster_dims, sizeof(int));
+	memset(end,   params.cluster_dims, sizeof(int));
 
 	while (nodes[j] != '\0') {
 		int mid = j   + params.cluster_dims + 1;

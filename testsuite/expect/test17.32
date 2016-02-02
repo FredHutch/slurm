@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Test of --overcommit option.
@@ -50,7 +50,7 @@ if {[test_alps]} {
 #
 file delete $file_in $file_out
 make_bash_script $file_in "
-  env | grep SLURM | sort
+  $bin_env | grep SLURM | $bin_sort
   $srun $bin_id"
 
 #

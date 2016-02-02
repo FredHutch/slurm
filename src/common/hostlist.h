@@ -1,7 +1,5 @@
 /*****************************************************************************\
- *  $Id$
- *****************************************************************************
- *  $LSDId: hostlist.h,v 1.4 2003/09/19 21:37:34 grondo Exp $
+ *  hostlist.h
  *****************************************************************************
  *  Copyright (C) 2002 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -43,14 +41,11 @@
 
 #include <unistd.h>		/* load ssize_t definition */
 
-/* max size of internal hostrange buffer */
-#define MAXHOSTRANGELEN 8192
-
 /* Since users can specify a numeric range in the prefix, we need to prevent
  * expressions that can consume all of the memory on a system and crash the
  * daemons (e.g. "a[0-999999999].b[0-9]", which generates 1 billion distinct
  * prefix records in the hostlist) */
-#define MAX_PREFIX_CNT 1024
+#define MAX_PREFIX_CNT 64*1024
 
 #if (SYSTEM_DIMENSIONS > 1)
 #define HOSTLIST_BASE 36
@@ -237,6 +232,7 @@ char * hostlist_nth(hostlist_t hl, int n);
  *
  * Note: Caller is responsible for freeing the returned memory.
  */
+char * hostlist_shift_dims(hostlist_t hl, int dims);
 char * hostlist_shift(hostlist_t hl);
 
 

@@ -45,6 +45,7 @@
 #include "src/slurmctld/slurmctld.h"
 
 typedef struct job_queue_rec {
+	uint32_t array_task_id;		/* Job array, task ID */
 	uint32_t job_id;		/* Job ID */
 	struct job_record *job_ptr;	/* Pointer to job record */
 	struct part_record *part_ptr;	/* Pointer to partition record. Each
@@ -72,7 +73,15 @@ extern List build_job_queue(bool clear_start, bool backfill);
 /* Given a scheduled job, return a pointer to it batch_job_launch_msg_t data */
 extern batch_job_launch_msg_t *build_launch_job_msg(
 					struct job_record *job_ptr,
-					uint16_t protocol_versin);
+					uint16_t protocol_version);
+
+/* Determine if job's deadline specification is still valid, kill job if not
+ * job_ptr IN - Job to test
+ * func IN - function named used for logging, "sched" or "backfill"
+ * RET - true of valid, false if invalid and job cancelled
+ */
+extern bool deadline_ok(struct job_record *job_ptr, char *func);
+
 /*
  * epilog_slurmctld - execute the prolog_slurmctld for a job that has just
  *	terminated.
@@ -117,6 +126,9 @@ extern int make_batch_job_cred(batch_job_launch_msg_t *launch_msg_ptr,
 /* Print a job's dependency information based upon job_ptr->depend_list */
 extern void print_job_dependency(struct job_record *job_ptr);
 
+/* Decrement a job's prolog_running counter and launch the job if zero */
+extern void prolog_running_decr(struct job_record *job_ptr);
+
 /*
  * prolog_slurmctld - execute the prolog_slurmctld for a job that has just
  *	been allocated resources.
@@ -142,9 +154,10 @@ extern void rebuild_job_part_list(struct job_record *job_ptr);
  * message type, alternately send a return code fo SLURM_SUCCESS
  * msg IN - The original message from slurmd
  * fini_job_ptr IN - Pointer to job that just completed and needs replacement
+ * locked IN - whether the job_write lock is locked or not.
  * RET true if there are pending jobs that might use the resources
  */
-extern bool replace_batch_job(slurm_msg_t * msg, void *fini_job);
+extern bool replace_batch_job(slurm_msg_t * msg, void *fini_job, bool locked);
 
 /*
  * schedule - attempt to schedule all pending jobs
@@ -154,6 +167,9 @@ extern bool replace_batch_job(slurm_msg_t * msg, void *fini_job);
  *		  queue on every job submit (0 means to use the system default,
  *		  SchedulerParameters for default_queue_depth)
  * RET count of jobs scheduled
+ * Note: If the scheduler has executed recently, rather than executing again
+ *	right away, a thread will be spawned to execute later in an effort
+ *	to reduce system overhead.
  * Note: We re-build the queue every time. Jobs can not only be added
  *	or removed from the queue, but have their priority or partition
  *	changed with the update_job RPC. In general nodes will be in priority

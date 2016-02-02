@@ -83,6 +83,7 @@ enum {
 
 extern int print_fields_parsable_print;
 extern int print_fields_have_header;
+extern char *fields_delimiter;
 
 extern void destroy_print_field(void *object);
 extern void print_fields_header(List print_fields_list);
@@ -101,8 +102,10 @@ extern void print_fields_uint32(
 	print_field_t *field, uint32_t value, int last);
 extern void print_fields_uint64(
 	print_field_t *field, uint64_t value, int last);
+extern void print_fields_hex064(
+	print_field_t *field, uint64_t value, int last);
 extern void print_fields_time_from_mins(print_field_t *field,
-					uint64_t value, int last);
+					uint32_t value, int last);
 extern void print_fields_time_from_secs(print_field_t *field,
 					uint64_t value, int last);
 extern void print_fields_char_list(print_field_t *field, List value, int last);

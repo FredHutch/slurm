@@ -18,7 +18,7 @@ AC_DEFUN([X_AC_HWLOC],
   AC_ARG_WITH(
     [hwloc],
     AS_HELP_STRING(--with-hwloc=PATH,Specify path to hwloc installation),
-    [_x_ac_hwloc_dirs="$withval $_x_ac_hwloc_dirs"])
+    [_x_ac_hwloc_dirs="$withval"])
 
   AC_CACHE_CHECK(
     [for hwloc installation],
@@ -52,7 +52,11 @@ AC_DEFUN([X_AC_HWLOC],
     AC_MSG_WARN([unable to locate hwloc installation])
   else
     HWLOC_CPPFLAGS="-I$x_ac_cv_hwloc_dir/include"
-    HWLOC_LDFLAGS="-Wl,-rpath -Wl,$x_ac_cv_hwloc_dir/$bit -L$x_ac_cv_hwloc_dir/$bit"
+    if test "$ac_with_rpath" = "yes"; then
+      HWLOC_LDFLAGS="-Wl,-rpath -Wl,$x_ac_cv_hwloc_dir/$bit -L$x_ac_cv_hwloc_dir/$bit"
+    else
+      HWLOC_LDFLAGS="-L$x_ac_cv_hwloc_dir/$bit"
+    fi
     HWLOC_LIBS="-lhwloc"
     AC_DEFINE(HAVE_HWLOC, 1, [Define to 1 if hwloc library found])
     if test "$x_ac_cv_hwloc_pci" = "yes"; then

@@ -522,6 +522,9 @@ static void _add_col_to_treeview(GtkTreeView *tree_view,
 	} else
 		renderer = gtk_cell_renderer_text_new();
 
+	if (model)
+		g_object_unref(model);
+
 	gtk_tree_view_column_pack_start(col, renderer, TRUE);
 
 	g_object_set_data(G_OBJECT(renderer), "column",
@@ -600,6 +603,9 @@ static void _selected_page(GtkMenuItem *menuitem, display_data_t *display_data)
 	case RESV_PAGE:
 		each.pfunc = &popup_all_resv;
 		break;
+	case BB_PAGE:
+		each.pfunc = &popup_all_bb;
+		break;
 	case FRONT_END_PAGE:
 		each.pfunc = &popup_all_front_end;
 		break;
@@ -633,6 +639,10 @@ static void _selected_page(GtkMenuItem *menuitem, display_data_t *display_data)
 			select_admin_nodes(treedata->model, &treedata->iter,
 					   display_data, NO_VAL,
 					   treedata->treeview);
+			break;
+		case BB_PAGE:
+			select_admin_bb(treedata->model, &treedata->iter,
+					   display_data, treedata->treeview);
 			break;
 		default:
 			g_print("common admin got %d %d\n",
@@ -941,13 +951,21 @@ extern void set_page_opts(int page, display_data_t *display_data,
 	itr = list_iterator_create(page_opts->col_list);
 	while ((col_name = list_next(itr))) {
 		replus(col_name);
-		if (strstr(col_name, "list")) {
+		if (strstr(col_name, "list") || strstr(col_name, " count")) {
 			char *orig_ptr = col_name;
 			xstrsubstitute(col_name, "bp ", "midplane");
-			if (cluster_flags & CLUSTER_FLAG_BG)
-				xstrsubstitute(col_name, "node", "midplane");
-			else
+			if (cluster_flags & CLUSTER_FLAG_BG) {
+				/* We only want to replace "nodes",
+				 * not "cnodes"
+				 */
+				if (col_name[0] != 'c')
+					xstrsubstitute(col_name,
+						       "node", "midplane");
+				xstrsubstitute(col_name, "core", "cnode");
+			} else {
 				xstrsubstitute(col_name, "midplane", "node");
+				xstrsubstitute(col_name, "cnode", "core");
+			}
 
 			/* Make sure we have the correct pointer here
 			   since xstrsubstitute() could of changed it
@@ -1185,7 +1203,7 @@ extern GtkTreeView *create_treeview_2cols_attach_to_table(GtkTable *table)
 					   "text", DISPLAY_FONT);
 	gtk_tree_view_append_column(tree_view, col);
 
-       	g_object_unref(treestore);
+	g_object_unref(treestore);
 	return tree_view;
 }
 
@@ -1379,9 +1397,6 @@ extern gboolean key_pressed(GtkTreeView *tree_view,
 			    GdkEventKey *event,
 			    const signal_params_t *signal_params)
 {
-	GtkTreePath *path = NULL;
-	GtkTreeViewColumn *column;
-
 	control_key_in_effect = FALSE;
 	enter_key_in_effect = FALSE;
 
@@ -1392,8 +1407,6 @@ extern gboolean key_pressed(GtkTreeView *tree_view,
 		each_t each;
 		GtkTreeSelection *selection = NULL;
 
-		gtk_tree_view_get_cursor(GTK_TREE_VIEW(tree_view),
-					 &path, &column);
 		selection = gtk_tree_view_get_selection(tree_view);
 		memset(&each, 0, sizeof(each_t));
 		each.tree_view = tree_view;
@@ -1745,10 +1758,7 @@ extern void destroy_popup_info(void *arg)
 		g_mutex_lock(sview_mutex);
 		/* these are all children of each other so must
 		   be freed in this order */
-		if (popup_win->grid_button_list) {
-			list_destroy(popup_win->grid_button_list);
-			popup_win->grid_button_list = NULL;
-		}
+		FREE_NULL_LIST(popup_win->grid_button_list);
 		if (popup_win->table) {
 			gtk_widget_destroy(GTK_WIDGET(popup_win->table));
 			popup_win->table = NULL;
@@ -1844,6 +1854,9 @@ extern void *popup_thr(popup_info_t *popup_win)
 	case FRONT_END_PAGE:
 		specifc_info = specific_info_front_end;
 		break;
+	case BB_PAGE:
+		specifc_info = specific_info_bb;
+		break;
 	case SUBMIT_PAGE:
 	default:
 		g_print("thread got unknown type %d\n", popup_win->type);
@@ -1885,6 +1898,9 @@ extern void set_for_update(GtkTreeModel *model, int updated)
 			}
 		}
 	}
+
+	if (path)
+		gtk_tree_path_free(path);
 }
 
 extern void remove_old(GtkTreeModel *model, int updated)
@@ -1913,8 +1929,7 @@ extern void remove_old(GtkTreeModel *model, int updated)
 	gtk_tree_path_free(path);
 }
 
-extern GtkWidget *create_pulldown_combo(display_data_t *display_data,
-					int count)
+extern GtkWidget *create_pulldown_combo(display_data_t *display_data)
 {
 	GtkListStore *store = NULL;
 	GtkWidget *combo = NULL;
@@ -1923,12 +1938,11 @@ extern GtkWidget *create_pulldown_combo(display_data_t *display_data,
 	int i=0;
 
 	store = gtk_list_store_new(2, G_TYPE_INT, G_TYPE_STRING);
-	for(i=0; i<count; i++) {
-		if (display_data[i].id == -1)
-			break;
+	while (display_data[i].id != -1) {
 		gtk_list_store_append(store, &iter);
 		gtk_list_store_set(store, &iter, 0, display_data[i].id,
 				   1, display_data[i].name, -1);
+		i++;
 	}
 	combo = gtk_combo_box_new_with_model(GTK_TREE_MODEL(store));
 
@@ -2047,8 +2061,8 @@ extern void display_admin_edit(GtkTable *table, void *type_msg, int *row,
 		entry = gtk_combo_box_new_with_model(model2);
 		g_object_unref(model2);
 
-/* 		(callback)_set_active_combo_part(GTK_COMBO_BOX(entry), model, */
-/* 				       iter, display_data->id); */
+/*		(callback)_set_active_combo_part(GTK_COMBO_BOX(entry), model, */
+/*				       iter, display_data->id); */
 		(set_active)(GTK_COMBO_BOX(entry), model,
 			     iter, display_data->id);
 
@@ -2127,8 +2141,8 @@ extern void add_display_treestore_line(int update,
 				       const char *name, char *value)
 {
 	if (!name) {
-/* 		g_print("error, name = %s and value = %s\n", */
-/* 			name, value); */
+/*		g_print("error, name = %s and value = %s\n", */
+/*			name, value); */
 		return;
 	}
 	if (update) {
@@ -2175,8 +2189,8 @@ extern void add_display_treestore_line_with_font(
 	char *font)
 {
 	if (!name) {
-/* 		g_print("error, name = %s and value = %s\n", */
-/* 			name, value); */
+/*		g_print("error, name = %s and value = %s\n", */
+/*			name, value); */
 		return;
 	}
 	if (update) {
@@ -2269,12 +2283,14 @@ extern char *page_to_str(int page)
 		return "Job";
 	case PART_PAGE:
 		return "Partition";
-	case NODE_PAGE:
-		return "Node";
-	case BLOCK_PAGE:
-		return "Block";
 	case RESV_PAGE:
 		return "Reservation";
+	case BB_PAGE:
+		return "BurstBuffer";
+	case BLOCK_PAGE:
+		return "Block";
+	case NODE_PAGE:
+		return "Node";
 	case FRONT_END_PAGE:
 		return "Frontend";
 	default:

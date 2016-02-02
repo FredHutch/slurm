@@ -90,6 +90,9 @@
 /* Define to 1 if you have the <curses.h> header file. */
 #undef HAVE_CURSES_H
 
+/* Define to 1 if DataWarp library found */
+#undef HAVE_DATAWARP
+
 /* Define to 1 if you have the declaration of `hstrerror', and to 0 if you
    don't. */
 #undef HAVE_DECL_HSTRERROR
@@ -112,11 +115,17 @@
 /* Define to 1 if you have the <dlfcn.h> header file. */
 #undef HAVE_DLFCN_H
 
+/* Define to 1 if you have the `eaccess' function. */
+#undef HAVE_EACCESS
+
 /* Define to 1 if you have the <errno.h> header file. */
 #undef HAVE_ERRNO_H
 
 /* Define to 1 if function EVP_MD_CTX_cleanup exists. */
 #undef HAVE_EVP_MD_CTX_CLEANUP
+
+/* Define to 1 if you have the `faccessat' function. */
+#undef HAVE_FACCESSAT
 
 /* Define to 1 if you have the `fdatasync' function. */
 #undef HAVE_FDATASYNC
@@ -129,6 +138,9 @@
 
 /* Define to 1 if running slurmd on front-end only */
 #undef HAVE_FRONT_END
+
+/* Define to 1 if you have the `get_current_dir_name' function. */
+#undef HAVE_GET_CURRENT_DIR_NAME
 
 /* Defined if you have HDF5 support */
 #undef HAVE_HDF5
@@ -154,20 +166,32 @@
 /* Define to 1 if you have the <inttypes.h> header file. */
 #undef HAVE_INTTYPES_H
 
+/* Define if you are compiling with json. */
+#undef HAVE_JSON
+
+/* Define if headers in include/json-c. */
+#undef HAVE_JSON_C_INC
+
+/* Define if headers in include/json. */
+#undef HAVE_JSON_INC
+
 /* Define to 1 if you have the <kstat.h> header file. */
 #undef HAVE_KSTAT_H
 
-/* Define to 1 if you have the `expat' library (-lexpat). */
-#undef HAVE_LIBEXPAT
-
-/* Define to 1 if you have the `job' library (-ljob). */
-#undef HAVE_LIBJOB
+/* Define to 1 if you have a functional curl library. */
+#undef HAVE_LIBCURL
 
 /* Define to 1 if you have the <limits.h> header file. */
 #undef HAVE_LIMITS_H
 
 /* Define to 1 if you have the <linux/sched.h> header file. */
 #undef HAVE_LINUX_SCHED_H
+
+/* Compile with Lua 5.1 */
+#undef HAVE_LUA_5_1
+
+/* Compile with Lua 5.2 */
+#undef HAVE_LUA_5_2
 
 /* Define to 1 if your system has a GNU libc compatible `malloc' function, and
    to 0 otherwise. */
@@ -197,6 +221,12 @@
 /* Define to 1 if you have the <netdb.h> header file. */
 #undef HAVE_NETDB_H
 
+/* Define to 1 if netloc library found */
+#undef HAVE_NETLOC
+
+/* Define to 1 if netloc includes use underscore not subdirectory */
+#undef HAVE_NETLOC_NOSUB
+
 /* define if you have nrt.h */
 #undef HAVE_NRT_H
 
@@ -223,6 +253,9 @@
 
 /* define if you have permapi_h */
 #undef HAVE_PERMAPI_H
+
+/* Define to 1 if pmix library found */
+#undef HAVE_PMIX
 
 /* Define if you have Posix semaphores. */
 #undef HAVE_POSIX_SEMS
@@ -269,6 +302,12 @@
 /* Define to 1 if you have the <socket.h> header file. */
 #undef HAVE_SOCKET_H
 
+/* Define to 1 if you have the `statfs' function. */
+#undef HAVE_STATFS
+
+/* Define to 1 if you have the `statvfs' function. */
+#undef HAVE_STATVFS
+
 /* Define to 1 if you have the <stdbool.h> header file. */
 #undef HAVE_STDBOOL_H
 
@@ -298,9 +337,6 @@
 
 /* Define to 1 if you have the `strsignal' function. */
 #undef HAVE_STRSIGNAL
-
-/* define if Sun Constellation system */
-#undef HAVE_SUN_CONST
 
 /* Define to 1 if you have the `sysctlbyname' function. */
 #undef HAVE_SYSCTLBYNAME
@@ -332,6 +368,9 @@
 /* Define to 1 if you have the <sys/statfs.h> header file. */
 #undef HAVE_SYS_STATFS_H
 
+/* Define to 1 if you have the <sys/statvfs.h> header file. */
+#undef HAVE_SYS_STATVFS_H
+
 /* Define to 1 if you have the <sys/stat.h> header file. */
 #undef HAVE_SYS_STAT_H
 
@@ -343,9 +382,6 @@
 
 /* Define to 1 if you have the <sys/systemcfg.h> header file. */
 #undef HAVE_SYS_SYSTEMCFG_H
-
-/* Define to 1 if you have the <sys/termios.h> header file. */
-#undef HAVE_SYS_TERMIOS_H
 
 /* Define to 1 if you have the <sys/types.h> header file. */
 #undef HAVE_SYS_TYPES_H
@@ -371,15 +407,75 @@
 /* Define to 1 if you have the <values.h> header file. */
 #undef HAVE_VALUES_H
 
-/* Define to 1 if using XCPU for job launch */
-#undef HAVE_XCPU
-
 /* Define if you have __progname. */
 #undef HAVE__PROGNAME
 
 /* Define to 1 if you have the external variable, _system_configuration with a
    member named physmem. */
 #undef HAVE__SYSTEM_CONFIGURATION
+
+/* Defined if libcurl supports AsynchDNS */
+#undef LIBCURL_FEATURE_ASYNCHDNS
+
+/* Defined if libcurl supports IDN */
+#undef LIBCURL_FEATURE_IDN
+
+/* Defined if libcurl supports IPv6 */
+#undef LIBCURL_FEATURE_IPV6
+
+/* Defined if libcurl supports KRB4 */
+#undef LIBCURL_FEATURE_KRB4
+
+/* Defined if libcurl supports libz */
+#undef LIBCURL_FEATURE_LIBZ
+
+/* Defined if libcurl supports NTLM */
+#undef LIBCURL_FEATURE_NTLM
+
+/* Defined if libcurl supports SSL */
+#undef LIBCURL_FEATURE_SSL
+
+/* Defined if libcurl supports SSPI */
+#undef LIBCURL_FEATURE_SSPI
+
+/* Defined if libcurl supports DICT */
+#undef LIBCURL_PROTOCOL_DICT
+
+/* Defined if libcurl supports FILE */
+#undef LIBCURL_PROTOCOL_FILE
+
+/* Defined if libcurl supports FTP */
+#undef LIBCURL_PROTOCOL_FTP
+
+/* Defined if libcurl supports FTPS */
+#undef LIBCURL_PROTOCOL_FTPS
+
+/* Defined if libcurl supports HTTP */
+#undef LIBCURL_PROTOCOL_HTTP
+
+/* Defined if libcurl supports HTTPS */
+#undef LIBCURL_PROTOCOL_HTTPS
+
+/* Defined if libcurl supports IMAP */
+#undef LIBCURL_PROTOCOL_IMAP
+
+/* Defined if libcurl supports LDAP */
+#undef LIBCURL_PROTOCOL_LDAP
+
+/* Defined if libcurl supports POP3 */
+#undef LIBCURL_PROTOCOL_POP3
+
+/* Defined if libcurl supports RTSP */
+#undef LIBCURL_PROTOCOL_RTSP
+
+/* Defined if libcurl supports SMTP */
+#undef LIBCURL_PROTOCOL_SMTP
+
+/* Defined if libcurl supports TELNET */
+#undef LIBCURL_PROTOCOL_TELNET
+
+/* Defined if libcurl supports TFTP */
+#undef LIBCURL_PROTOCOL_TFTP
 
 /* Define the libnrt.so location */
 #undef LIBNRT_SO
@@ -458,6 +554,9 @@
 /* Define to the setproctitle() emulation type */
 #undef SETPROCTITLE_STRATEGY
 
+/* Define path to sleep command */
+#undef SLEEP_CMD
+
 /* Define the default port number for slurmctld */
 #undef SLURMCTLD_PORT
 
@@ -515,6 +614,9 @@
 /* Define to 1 if strerror_r returns char *. */
 #undef STRERROR_R_CHAR_P
 
+/* Define path to su command */
+#undef SUCMD
+
 /* 3-dimensional architecture */
 #undef SYSTEM_DIMENSIONS
 
@@ -545,9 +647,6 @@
 # endif
 #endif
 
-/* Define location of XCPU directory */
-#undef XCPU_DIR
-
 /* Enable large inode numbers on Mac OS X 10.5.  */
 #ifndef _DARWIN_USE_64_BIT_INODE
 # define _DARWIN_USE_64_BIT_INODE 1
@@ -558,6 +657,9 @@
 
 /* Define for large files, on AIX-style hosts. */
 #undef _LARGE_FILES
+
+/* Define curl_free() as free() if our version of curl lacks curl_free. */
+#undef curl_free
 
 /* Define to rpl_malloc if the replacement function should be used. */
 #undef malloc

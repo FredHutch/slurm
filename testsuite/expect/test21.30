@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #         Test that checks if the QOS limits are enforced.
@@ -46,19 +46,24 @@ source ./inc21.30.13
 source ./inc21.30.14
 source ./inc21.30.15
 source ./inc21.30.16
+source ./inc21.30.17
 
 set test_id	"21.30"
 set exit_code	0
+set test_node   ""
+# Total cpus in test node
+set totcpus     0
+set nthreads    0
 set acct        test_acct
 set user_name   ""
 set qosname     name
 set qostest     "$test_id\_qostest"
 set grn         GrpNodes
-set grn_num     2
+set grn_num     0
 set grcpu       GrpCpus
-set grcpu_num   10
+set grcpu_num   0
 set grpcpumin   GrpCPUMins
-set grpcpumin_num  4
+set grpcpumin_num  0
 # Set grpcpurunmin_num to multiple of CPUs per core to work with most configurations
 # Also make sure that it is at least 4 so we can add and subtract from it
 set grpcpurunmin GrpCPURunMins
@@ -72,23 +77,26 @@ set grsub_num   2
 set grpwall     GrpWall
 set grpwall_num 1
 set maxcpu      MaxCpus
-set maxcpu_num  10
+set maxcpu_num  0
 # Set maxcpumin_num to multiple of CPUs per core to work with most configurations
 set maxcpumin   MaxCPUMins
-set maxcpumin_num 2
+set maxcpumin_num 0
 set maxwall     MaxWall
 set maxwall_num 2
 set maxcpuspu   MaxCPUSPerUser
 set maxcpuspu_num 2
 set maxnodes    MaxNodes
-set maxnode_num 10
+set maxnode_num 0
 set maxnodespu  MaxNodesPerUser
-set maxnodespu_num 2
+set maxnodespu_num 0
 set maxjobs     MaxJobs
 set maxjobs_num 2
 set maxjobsub   MaxSubmitJobs
 set maxjobsub_num 2
 set time_spacing 1
+
+# cr_core = 1 / cr_cpu = 0
+set selectparam  0
 
 # mod qos
 array set mod_qos_vals {
@@ -110,9 +118,34 @@ array set mod_qos_vals {
 	MaxNode         -1
 }
 
-
-
 print_header $test_id
+
+# Check to see that there are enough resources in the default partition
+set tmpc 0
+set tmpn 0
+spawn $scontrol show part [default_partition]
+expect {
+	-re "TotalCPUs=($number)" {
+		set tmpc [expr $expect_out(1,string) - 1]
+		exp_continue
+	}
+	-re "TotalNodes=($number)" {
+		set tmpn [expr $expect_out(1,string) - 1]
+		exp_continue
+	}
+	timeout {
+		send_user "\nFAILURE: scontrol is not responding\n"
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
+
+if {$tmpc == 0 || $tmpn == 0} {
+	send_user "\nWARNING: not enough Nodes and/or CPUs\n"
+	exit 0
+}
 
 # Checks the state of the job
 proc check_state { job } {
@@ -140,6 +173,93 @@ proc check_state { job } {
 	}
 
 }
+
+# Determine what the selecttype param is
+if {[test_select_type_params "CR_CORE"]} {
+	set selectparam 1
+}
+
+set got_node 0
+spawn $srun -N1 printenv SLURM_NODELIST
+expect {
+	-re "($alpha_numeric_under)" {
+		set test_node $expect_out(1,string)
+		set got_node 1
+		exp_continue
+	}
+	timeout {
+		send_user "\nFAILURE: srun is not responding\n"
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
+
+if {$got_node != 1} {
+	send_user "\nFAILURE: did not get node for testing\n"
+	exit 0
+}
+
+# Get the number of cpus on a node
+
+spawn $scontrol show node $test_node
+expect {
+	-re "CPUTot=($number)" {
+		set totcpus $expect_out(1,string)
+		exp_continue
+	}
+	-re "ThreadsPerCore=($number)" {
+		set nthreads $expect_out(1,string)
+		exp_continue
+	}
+	timeout {
+		send_user "\nFAILURE: scontrol is not responding\n"
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
+
+if {$totcpus == 0} {
+	send_user "\nFAILURE: no cpus where found\n"
+	exit 1
+} else {
+	# Set QoS CPU values
+	set grcpu_num [expr $totcpus - $nthreads]
+	set grpcpumin_num $totcpus
+	set maxcpu_num [expr $totcpus - $nthreads]
+	set maxcpumin_num $totcpus
+}
+
+# Get the number of nodes in the default partition
+set num_nodes 0
+spawn $scontrol show partition [default_partition]
+expect {
+	-re "TotalNodes=($number)" {
+		set num_nodes [expr $expect_out(1,string) - 1]
+		exp_continue
+	}
+	timeout {
+		send_user "\nFAILURE: scontrol is not responding\n"
+		set exit_code 1
+	}
+	eof {
+		wait
+	}
+}
+
+if {$num_nodes == 0} {
+	send_user "\nFAILURE: no cpus where found\n"
+	exit 1
+} else {
+	# Set QoS node values
+	set grn_num     $num_nodes
+	set maxnode_num $num_nodes
+	set maxnodespu_num $num_nodes
+}
+
 
 proc endit { } {
 	global sacctmgr qostest acct test_id exit_code
@@ -202,8 +322,25 @@ if { [test_limits_enforced] == 0 } {
 	send_user "\nWARNING: This test can't be run without enforcing limits\n"
 	exit 0
 }
+if {[test_super_user] == 0} {
+	send_user "\nWARNING Test can only be ran as SlurmUser\n"
+	exit 0
+}
 
-# Remove any vesitgial accounts or qos
+#
+# Some tests will not work properly when allocating sockets or whole nodes to jobs
+#
+set select_type [test_select_type]
+if {![string compare $select_type "linear"] || [default_part_exclusive]} {
+	send_user "\nWARNING: This test is incompatible with exclusive node allocations\n"
+	exit 0
+}
+if {[test_select_type_params "CR_SOCKET"]} {
+	send_user "\nWARNING: This test is incompatible with CR_SOCKET allocations\n"
+	exit 0
+}
+
+# Remove any vestigial accounts or qos
 spawn $sacctmgr -i delete qos $qostest
 expect {
 	-re "Deleting QOS(s)" {
@@ -325,7 +462,6 @@ if {$exit_code != 0} {
 	endit
 }
 set mod_qos_vals(GrpCpus) "-1"
-
 
 #
 # test GrpJob limits
@@ -474,6 +610,12 @@ set mod_qos_vals(MaxWall) "-1"
 #
 # Test Max CPUs Per User
 #
+
+# If CR_CORE set maxcpuspu a multiple number of threads
+if {$selectparam} {
+	set maxcpuspu_num [expr $maxcpuspu_num * $nthreads]
+}
+
 set mod_qos_vals(MaxCpusPerUser) $maxcpuspu_num
 mod_qos $qostest [array get mod_qos_vals]
 sleep $time_spacing
@@ -494,5 +636,18 @@ if {$exit_code != 0 } {
 	endit
 }
 set mod_qos_vals(MaxNodesPerUser) "-1"
+
+#
+# Test MaxWall is used as job's timelimit if job was requested
+# without --time option
+#
+set mod_qos_vals(MaxWall) $maxwall_num
+mod_qos $qostest [array get mod_qos_vals]
+sleep $time_spacing
+inc21_30_17
+if {$exit_code != 0 } {
+	endit
+}
+set mod_qos_vals(MaxWall) "-1"
 
 endit

@@ -69,6 +69,14 @@ extern pid_t getpgid(pid_t pid);
 extern int devnull;
 
 /*
+ * Message aggregation types
+ */
+typedef enum {
+	WINDOW_TIME,
+	WINDOW_MSGS
+} msg_aggr_param_type_t;
+
+/*
  * Global config type
  */
 typedef struct slurmd_config {
@@ -105,6 +113,8 @@ typedef struct slurmd_config {
 	uint16_t      cr_type;		/* Consumable Resource Type:       *
 					 * CR_SOCKET, CR_CORE, CR_MEMORY,  *
 					 * CR_DEFAULT, etc.                */
+	time_t        last_update;	/* last update time of the
+					 * build parameters */
 	uint16_t      mem_limit_enforce; /* enforce mem limit on running job */
 	int           nice;		/* command line nice value spec    */
 	char         *node_name;	/* node name                       */
@@ -131,8 +141,9 @@ typedef struct slurmd_config {
 	uint16_t      log_fmt;          /* Log file timestamp format flag  */
 	int           debug_level;	/* logging detail level            */
 	uint16_t      debug_level_set;	/* debug_level set on command line */
-	uint32_t      debug_flags;	/* DebugFlags configured           */
-	int           daemonize:1;	/* daemonize flag		   */
+	uint64_t      debug_flags;	/* DebugFlags configured           */
+	int	      boot_time:1;      /* Report node boot time now (-b)  */
+	int           daemonize:1;	/* daemonize flag (-D)		   */
 	int	      cleanstart:1;     /* clean start requested (-c)      */
 	int           mlock_pages:1;	/* mlock() slurmd  */
 
@@ -149,8 +160,11 @@ typedef struct slurmd_config {
 	char           *acct_gather_filesystem_type; /*  */
 	char           *acct_gather_infiniband_type; /*  */
 	char           *acct_gather_profile_type; /*  */
+	char           *msg_aggr_params;      /* message aggregation params */
+	uint64_t        msg_aggr_window_msgs; /* msg aggr window size in msgs */
+	uint64_t        msg_aggr_window_time; /* msg aggr window size in time */
 	uint16_t	use_pam;
-	uint16_t	task_plugin_param; /* TaskPluginParams, expressed
+	uint32_t	task_plugin_param; /* TaskPluginParams, expressed
 					 * using cpu_bind_type_t flags */
 	uint16_t	propagate_prio;	/* PropagatePrioProcess flag       */
 
@@ -161,6 +175,9 @@ typedef struct slurmd_config {
 	List		prolog_running_jobs;
 	pthread_mutex_t	prolog_running_lock;
 	pthread_cond_t	prolog_running_cond;
+	char         *plugstack;	/* path to SPANK config file	*/
+	uint16_t      kill_wait;	/* seconds between SIGXCPU to SIGKILL
+					 * on job termination */
 } slurmd_conf_t;
 
 extern slurmd_conf_t * conf;

@@ -106,8 +106,10 @@ uint16_t _can_job_run_on_node(struct job_record *job_ptr, bitstr_t *core_map,
 	struct node_record *node_ptr = node_record_table_ptr + node_i;
 	List gres_list;
 
-	if (!test_only && IS_NODE_COMPLETING(node_ptr)) {
-		/* Do not allocate more jobs to nodes with completing jobs */
+	if (((job_ptr->bit_flags & BACKFILL_TEST) == 0) &&
+	    !test_only && IS_NODE_COMPLETING(node_ptr)) {
+		/* Do not allocate more jobs to nodes with completing jobs,
+		 * backfill scheduler independently handles completing nodes */
 		cpus = 0;
 		return cpus;
 	}
@@ -127,27 +129,29 @@ uint16_t _can_job_run_on_node(struct job_record *job_ptr, bitstr_t *core_map,
 	gres_plugin_job_core_filter(job_ptr->gres_list, gres_list, test_only,
 				    core_map, core_start_bit, core_end_bit,
 				    node_ptr->name);
+	gres_cores = gres_plugin_job_test(job_ptr->gres_list,
+					  gres_list, test_only,
+					  core_map, core_start_bit,
+					  core_end_bit, job_ptr->job_id,
+					  node_ptr->name);
 
-	if ((cr_type & CR_MEMORY) && cpus) {
+	if (job_ptr->details && (cr_type & CR_MEMORY) && cpus) {
 		req_mem   = job_ptr->details->pn_min_memory & ~MEM_PER_CPU;
-		avail_mem = select_node_record[node_i].real_memory;
+		avail_mem = select_node_record[node_i].real_memory -
+			    select_node_record[node_i].mem_spec_limit;
 		if (!test_only)
 			avail_mem -= node_usage[node_i].alloc_memory;
 		if (req_mem > avail_mem)
 			cpus = 0;
 	}
 
-	gres_cores = gres_plugin_job_test(job_ptr->gres_list,
-					  gres_list, test_only,
-					  core_map, core_start_bit,
-					  core_end_bit, job_ptr->job_id,
-					  node_ptr->name);
 	gres_cpus = gres_cores;
 	if (gres_cpus != NO_VAL)
 		gres_cpus *= cpus_per_core;
-	if ((gres_cpus < job_ptr->details->ntasks_per_node) ||
-	    ((job_ptr->details->cpus_per_task > 1) &&
-	     (gres_cpus < job_ptr->details->cpus_per_task)))
+	if ((job_ptr->details) &&
+	    ((gres_cpus < job_ptr->details->ntasks_per_node) ||
+	     ((job_ptr->details->cpus_per_task > 1) &&
+	      (gres_cpus < job_ptr->details->cpus_per_task))))
 		gres_cpus = 0;
 	if (gres_cpus < cpus)
 		cpus = gres_cpus;
@@ -506,7 +510,8 @@ extern int cr_job_test(struct job_record *job_ptr, bitstr_t *bitmap, int mode,
 	bitstr_t *orig_map, *avail_cores, *free_cores;
 	bitstr_t *tmpcore = NULL;
 	bool test_only;
-	uint32_t c, i, j, k, n, csize, save_mem = 0;
+	uint32_t c, i, j, k, csize, save_mem = 0;
+	int n;
 	job_resources_t *job_res;
 	struct job_details *details_ptr;
 	struct part_res_record *p_ptr, *jp_ptr;
@@ -970,5 +975,6 @@ alloc_job:
 		/* memory is per-node */
 		job_res->memory_allocated[0] = save_mem;
 	}
+
 	return error_code;
 }

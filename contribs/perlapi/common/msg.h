@@ -220,6 +220,20 @@ inline static int hv_store_int(HV* hv, const char *key, int val)
 }
 
 /*
+ * store a double
+ */
+inline static int hv_store_double(HV* hv, const char *key, double val)
+{
+	SV* sv = newSVnv(val);
+
+	if (!key || hv_store(hv, key, (I32)strlen(key), sv, 0) == NULL) {
+		SvREFCNT_dec(sv);
+		return -1;
+	}
+	return 0;
+}
+
+/*
  * store a signed 32b int into HV
  */
 inline static int hv_store_int32_t(HV* hv, const char *key, int32_t val)
@@ -289,6 +303,7 @@ inline static int hv_store_ptr(HV* hv, const char *key, void* ptr, const char *c
 
 #define SV2int(sv)      SvIV(sv)
 #define SV2int32_t(sv)  SvIV(sv)
+#define SV2uint64_t(sv) SvUV(sv)
 #define SV2uint32_t(sv) SvUV(sv)
 #define SV2uint16_t(sv) SvUV(sv)
 #define SV2uint8_t(sv)  SvUV(sv)

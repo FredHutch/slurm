@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Tests #SLURM entry functionality in a batch script.
@@ -41,6 +41,12 @@ set job_name    "TEST_NAME"
 set delay       1
 
 print_header $test_id
+
+set enforce [test_enforce_part_limits]
+if {![string compare $enforce "NO"]} {
+	send_user "\nWARNING: This test is incompatible EnforcePartLimits = $enforce\n"
+	exit 0
+}
 
 make_bash_script $file_in "
 #SBATCH --job-name=$job_name
@@ -95,8 +101,7 @@ cancel_job $job_id
 #   to occur before contending with a multitude of job step creations.
 #   This is especially important on very slow systems (e.g. AIX).
 #
-make_bash_script $file_in "
-#SBATCH -N1000000k
+make_bash_script $file_in "#SBATCH -N1000000k
 $bin_sleep $delay
 "
 set job_id  0

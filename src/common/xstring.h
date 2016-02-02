@@ -52,6 +52,9 @@
 #define xstrfmtcat(__p, __fmt, args...)	_xstrfmtcat(&(__p), __fmt, ## args)
 #define xmemcat(__p, __s, __e)          _xmemcat(&(__p), __s, __e)
 #define xstrsubstitute(__p, __pat, __rep) _xstrsubstitute(&(__p), __pat, __rep)
+#define xstrsubstituteall(__p, __pat, __rep)			\
+	while (_xstrsubstitute(&(__p), __pat, __rep))		\
+		;
 
 /*
 ** The following functions take a ptr to a string and expand the
@@ -142,8 +145,9 @@ char *xbasename(char *path);
 /*
 ** Find the first instance of a sub-string "pattern" in the string "str",
 ** and replace it with the string "replacement".
+** If it wasn't found returns 0, otherwise 1
 */
-void _xstrsubstitute(char **str, const char *pattern, const char *replacement);
+bool _xstrsubstitute(char **str, const char *pattern, const char *replacement);
 
 /*
  * Remove all quotes that surround a string in the string "str",
@@ -184,6 +188,11 @@ char *xstrchr(const char *s1, int c);
  * safe strcmp (handles NULL values)
  */
 int xstrcmp(const char *s1, const char *s2);
+
+/*
+ * safe strncmp (handles NULL values)
+ */
+int xstrncmp(const char *s1, const char *s2, size_t n);
 
 /*
  * safe strcasecmp (handles NULL values)

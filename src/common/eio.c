@@ -54,9 +54,22 @@
 #include "src/common/xassert.h"
 #include "src/common/xmalloc.h"
 
-/* How many seconds to wait after eio_signal_shutdown() is called before
- * terminating the job and abandoning any I/O remaining to be processed */
-#define EIO_SHUTDOWN_WAIT 60
+/*
+ * Define slurm-specific aliases for use by plugins, see slurm_xlator.h
+ * for details.
+ */
+strong_alias(eio_handle_create,		slurm_eio_handle_create);
+strong_alias(eio_handle_destroy,	slurm_eio_handle_destroy);
+strong_alias(eio_handle_mainloop,	slurm_eio_handle_mainloop);
+strong_alias(eio_message_socket_readable, slurm_eio_message_socket_readable);
+strong_alias(eio_message_socket_accept,	slurm_eio_message_socket_accept);
+strong_alias(eio_new_obj,		slurm_eio_new_obj);
+strong_alias(eio_new_initial_obj,	slurm_eio_new_initial_obj);
+strong_alias(eio_obj_create,		slurm_eio_obj_create);
+strong_alias(eio_obj_destroy,		slurm_eio_obj_destroy);
+strong_alias(eio_remove_obj,		slurm_eio_remove_obj);
+strong_alias(eio_signal_shutdown,	slurm_eio_signal_shutdown);
+strong_alias(eio_signal_wakeup,		slurm_eio_signal_wakeup);
 
 /*
  * outside threads can stick new objects on the new_objs List and
@@ -69,6 +82,8 @@ struct eio_handle_components {
 	int  magic;
 #endif
 	int  fds[2];
+	time_t shutdown_time;
+	uint16_t shutdown_wait;
 	List obj_list;
 	List new_objs;
 };
@@ -77,16 +92,16 @@ struct eio_handle_components {
 /* Function prototypes
  */
 
-static int          _poll_internal(struct pollfd *pfds, unsigned int nfds);
+static int          _poll_internal(struct pollfd *pfds, unsigned int nfds,
+				   time_t shutdown_time);
 static unsigned int _poll_setup_pollfds(struct pollfd *, eio_obj_t **, List);
 static void         _poll_dispatch(struct pollfd *, unsigned int, eio_obj_t **,
 		                   List objList);
 static void         _poll_handle_event(short revents, eio_obj_t *obj,
 		                       List objList);
 
-static time_t eio_shutdown_time = (time_t) 0;
 
-eio_handle_t *eio_handle_create(void)
+eio_handle_t *eio_handle_create(uint16_t shutdown_wait)
 {
 	eio_handle_t *eio = xmalloc(sizeof(*eio));
 
@@ -105,6 +120,10 @@ eio_handle_t *eio_handle_create(void)
 	eio->obj_list = list_create(eio_obj_destroy);
 	eio->new_objs = list_create(eio_obj_destroy);
 
+	eio->shutdown_wait = DEFAULT_EIO_SHUTDOWN_WAIT;
+	if (shutdown_wait > 0)
+		eio->shutdown_wait = shutdown_wait;
+
 	return eio;
 }
 
@@ -114,11 +133,8 @@ void eio_handle_destroy(eio_handle_t *eio)
 	xassert(eio->magic == EIO_MAGIC);
 	close(eio->fds[0]);
 	close(eio->fds[1]);
-	if (eio->obj_list)
-		list_destroy(eio->obj_list);
-
-	if (eio->new_objs)
-		list_destroy(eio->new_objs);
+	FREE_NULL_LIST(eio->obj_list);
+	FREE_NULL_LIST(eio->new_objs);
 
 	xassert(eio->magic = ~EIO_MAGIC);
 	xfree(eio);
@@ -160,12 +176,18 @@ int eio_message_socket_accept(eio_obj_t *obj, List objs)
 			    (socklen_t *)&len)) < 0) {
 		if (errno == EINTR)
 			continue;
-		if (errno == EAGAIN       ||
-		    errno == ECONNABORTED ||
-		    errno == EWOULDBLOCK) {
+		if ((errno == EAGAIN) ||
+		    (errno == ECONNABORTED) ||
+		    (errno == EWOULDBLOCK)) {
 			return SLURM_SUCCESS;
 		}
 		error("Error on msg accept socket: %m");
+		if ((errno == EMFILE)  ||
+		    (errno == ENFILE)  ||
+		    (errno == ENOBUFS) ||
+		    (errno == ENOMEM)) {
+			return SLURM_SUCCESS;
+		}
 		obj->shutdown = true;
 		return SLURM_SUCCESS;
 	}
@@ -186,18 +208,17 @@ int eio_message_socket_accept(eio_obj_t *obj, List objs)
 	slurm_msg_t_init(msg);
 again:
 	if (slurm_receive_msg(fd, msg, obj->ops->timeout) != 0) {
-		if (errno == EINTR) {
+		if (errno == EINTR)
 			goto again;
-		}
 		error("slurm_receive_msg[%u.%u.%u.%u]: %m",
-		      uc[0],uc[1],uc[2],uc[3]);
+		      uc[0], uc[1], uc[2], uc[3]);
 		goto cleanup;
 	}
 
-	(*obj->ops->handle_msg)(obj->arg, msg); /* handle_msg should free
-					      * msg->data */
+	(*obj->ops->handle_msg)(obj->arg, msg);
+
 cleanup:
-	if ((msg->conn_fd >= 0) && slurm_close_accepted_conn(msg->conn_fd) < 0)
+	if ((msg->conn_fd >= 0) && (slurm_close(msg->conn_fd) < 0))
 		error ("close(%d): %m", msg->conn_fd);
 	slurm_free_msg(msg);
 
@@ -208,7 +229,7 @@ int eio_signal_shutdown(eio_handle_t *eio)
 {
 	char c = 1;
 
-	eio_shutdown_time = time(NULL);
+	eio->shutdown_time = time(NULL);
 	if (eio && (write(eio->fds[1], &c, sizeof(char)) != 1))
 		return error("eio_handle_signal_shutdown: write; %m");
 	return 0;
@@ -271,7 +292,7 @@ int eio_handle_mainloop(eio_handle_t *eio)
 		if (maxnfds < n) {
 			maxnfds = n;
 			xrealloc(pollfds, (maxnfds+1) * sizeof(struct pollfd));
-			xrealloc(map,     maxnfds     * sizeof(eio_obj_t *  ));
+			xrealloc(map, maxnfds * sizeof(eio_obj_t *));
 			/*
 			 * Note: xrealloc() also handles initial malloc
 			 */
@@ -293,19 +314,19 @@ int eio_handle_mainloop(eio_handle_t *eio)
 
 		xassert(nfds <= maxnfds + 1);
 
-		if (_poll_internal(pollfds, nfds) < 0)
+		if (_poll_internal(pollfds, nfds, eio->shutdown_time) < 0)
 			goto error;
 
 		if (pollfds[nfds-1].revents & POLLIN)
 			_eio_wakeup_handler(eio);
 
-		_poll_dispatch(pollfds, nfds-1, map, eio->obj_list);
+		_poll_dispatch(pollfds, nfds - 1, map, eio->obj_list);
 
-		if (eio_shutdown_time &&
-		    (difftime(time(NULL), eio_shutdown_time) >=
-		     EIO_SHUTDOWN_WAIT)) {
-			error("Abandoning IO %d secs after job shutdown "
-			      "initiated", EIO_SHUTDOWN_WAIT);
+		if (eio->shutdown_time
+		    && difftime(time(NULL), eio->shutdown_time)
+		    >= eio->shutdown_wait) {
+			error("%s: Abandoning IO %d secs after job shutdown "
+			      "initiated", __func__, eio->shutdown_wait);
 			break;
 		}
 	}
@@ -318,11 +339,11 @@ int eio_handle_mainloop(eio_handle_t *eio)
 }
 
 static int
-_poll_internal(struct pollfd *pfds, unsigned int nfds)
+_poll_internal(struct pollfd *pfds, unsigned int nfds, time_t shutdown_time)
 {
 	int n, timeout;
 
-	if (eio_shutdown_time)
+	if (shutdown_time)
 		timeout = 1000;	/* Return every 1000 msec during shutdown */
 	else
 		timeout = -1;
@@ -360,6 +381,11 @@ _poll_setup_pollfds(struct pollfd *pfds, eio_obj_t *map[], List l)
 	eio_obj_t    *obj  = NULL;
 	unsigned int  nfds = 0;
 	bool          readable, writable;
+
+	if (!pfds) {	/* Fix for CLANG false positive */
+		fatal("pollfd data structure is null");
+		return nfds;
+	}
 
 	while ((obj = list_next(i))) {
 		writable = _is_writable(obj);
@@ -419,10 +445,8 @@ _poll_handle_event(short revents, eio_obj_t *obj, List objList)
 			(*obj->ops->handle_error) (obj, objList);
 		} else if (obj->ops->handle_read) {
 			(*obj->ops->handle_read) (obj, objList);
-			read_called = true;
 		} else if (obj->ops->handle_write) {
 			(*obj->ops->handle_write) (obj, objList);
-			write_called = true;
 		} else {
 			debug("No handler for %s on fd %d",
 			      revents & POLLERR ? "POLLERR" : "POLLNVAL",
@@ -455,7 +479,6 @@ _poll_handle_event(short revents, eio_obj_t *obj, List objList)
 		if (obj->ops->handle_read) {
 			if (!read_called) {
 				(*obj->ops->handle_read ) (obj, objList);
-				read_called = true;
 			}
 		} else {
 			debug("No handler for POLLIN");
@@ -467,7 +490,6 @@ _poll_handle_event(short revents, eio_obj_t *obj, List objList)
 		if (obj->ops->handle_write) {
 			if (!write_called) {
 				(*obj->ops->handle_write) (obj, objList);
-				write_called = true;
 			}
 		} else {
 			debug("No handler for POLLOUT");
@@ -542,3 +564,24 @@ void eio_new_obj(eio_handle_t *eio, eio_obj_t *obj)
 	list_enqueue(eio->new_objs, obj);
 	eio_signal_wakeup(eio);
 }
+
+bool eio_remove_obj(eio_obj_t *obj, List objs)
+{
+	ListIterator i;
+	eio_obj_t *obj1;
+	bool ret = false;
+
+	xassert(obj != NULL);
+
+	i  = list_iterator_create(objs);
+	while ((obj1 = list_next(i))) {
+		if (obj1 == obj) {
+			list_delete_item(i);
+			ret = true;
+			break;
+		}
+	}
+	list_iterator_destroy(i);
+	return ret;
+}
+

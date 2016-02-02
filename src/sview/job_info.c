@@ -1,8 +1,9 @@
 /*****************************************************************************\
  *  job_info.c - Functions related to job display mode of sview.
  *****************************************************************************
- *  Copyright (C) 2004-2007 The Regents of the University of California.
+ *  Portions Copyright (C) 2011-2014 SchedMD LLC
  *  Copyright (C) 2008-2011 Lawrence Livermore National Security.
+ *  Copyright (C) 2004-2007 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Danny Auble <da@llnl.gov>
  *
@@ -112,6 +113,7 @@ enum {
 	SORTID_BATCH,
 	SORTID_BATCH_HOST,
 	SORTID_BLOCK,
+	SORTID_BURST_BUFFER,
 	SORTID_COLOR,
 	SORTID_COLOR_INX,
 	SORTID_COMMAND,
@@ -125,6 +127,7 @@ enum {
 	SORTID_CPU_MAX,
 	SORTID_CPU_MIN,
 	SORTID_CPUS_PER_TASK,
+	SORTID_DEADLINE,
 	SORTID_DEPENDENCY,
 	SORTID_DERIVED_EC,
 	SORTID_EXIT_CODE,
@@ -143,7 +146,9 @@ enum {
 	SORTID_IMAGE_MLOADER,
 #endif
 	SORTID_JOBID,
+	SORTID_JOBID_FORMATTED,
 	SORTID_LICENSES,
+	SORTID_MCS_LABEL,
 	SORTID_CPU_REQ,
 	SORTID_MEM_MIN,
 	SORTID_TMP_DISK,
@@ -189,6 +194,7 @@ enum {
 	SORTID_STD_OUT,
 	SORTID_SWITCHES,
 	SORTID_TASKS,
+	SORTID_THREAD_SPEC,
 /* 	SORTID_THREADS_MAX, */
 /* 	SORTID_THREADS_MIN, */
 	SORTID_TIME_ELIGIBLE,
@@ -199,6 +205,7 @@ enum {
 	SORTID_TIME_START,
 	SORTID_TIME_SUBMIT,
 	SORTID_TIME_SUSPEND,
+	SORTID_TRES,
 	SORTID_SMALL_BLOCK,
 	SORTID_UPDATED,
 	SORTID_USER_ID,
@@ -220,6 +227,8 @@ static display_data_t display_data_job[] = {
 	 create_model_job, admin_edit_job},
 	{G_TYPE_STRING, SORTID_JOBID, "JobID", FALSE, EDIT_NONE, refresh_job,
 	 create_model_job, admin_edit_job},
+	{G_TYPE_STRING, SORTID_JOBID_FORMATTED, NULL, FALSE, EDIT_NONE,
+	 refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_STRING, SORTID_COLOR, NULL, TRUE, EDIT_COLOR,
 	 refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_STRING, SORTID_ACTION, "Action", FALSE,
@@ -310,6 +319,8 @@ static display_data_t display_data_job[] = {
 	 EDIT_TEXTBOX, refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_STRING, SORTID_TIME_END, "Time End", FALSE,
 	 EDIT_NONE, refresh_job, create_model_job, admin_edit_job},
+	{G_TYPE_STRING, SORTID_DEADLINE, "Deadline", FALSE,
+	 EDIT_TEXTBOX, refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_STRING, SORTID_TIME_SUSPEND, "Time Suspended", FALSE,
 	 EDIT_NONE, refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_STRING, SORTID_TIMELIMIT, "Time Limit", FALSE,
@@ -341,6 +352,8 @@ static display_data_t display_data_job[] = {
 	 refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_STRING, SORTID_CORE_SPEC, "CoreSpec", FALSE, EDIT_TEXTBOX,
 	 refresh_job, create_model_job, admin_edit_job},
+	{G_TYPE_STRING, SORTID_THREAD_SPEC, "ThreadSpec", FALSE, EDIT_TEXTBOX,
+	 refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_STRING, SORTID_REBOOT, "Reboot", FALSE, EDIT_MODEL,
 	 refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_STRING, SORTID_REQUEUE, "Requeue", FALSE, EDIT_MODEL,
@@ -358,6 +371,8 @@ static display_data_t display_data_job[] = {
 	 EDIT_NONE, refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_STRING, SORTID_BATCH_HOST, "Batch Host", FALSE,
 	 EDIT_NONE, refresh_job, create_model_job, admin_edit_job},
+	{G_TYPE_STRING, SORTID_BURST_BUFFER, "Burst Buffer", FALSE,
+	 EDIT_TEXTBOX, refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_STRING, SORTID_CPU_MIN, "CPUs Min",
 	 FALSE, EDIT_NONE, refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_STRING, SORTID_CPU_MAX, "CPUs Max",
@@ -403,6 +418,8 @@ static display_data_t display_data_job[] = {
 	 FALSE, EDIT_TEXTBOX, refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_STRING, SORTID_LICENSES, "Licenses",
 	 FALSE, EDIT_TEXTBOX, refresh_job, create_model_job, admin_edit_job},
+	{G_TYPE_STRING, SORTID_MCS_LABEL, "MCS_Label",
+	 FALSE, EDIT_TEXTBOX, refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_STRING, SORTID_DEPENDENCY, "Dependency",
 	 FALSE, EDIT_TEXTBOX, refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_STRING, SORTID_ALLOC_NODE, "Alloc Node : Sid",
@@ -421,6 +438,8 @@ static display_data_t display_data_job[] = {
 	 refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_INT, SORTID_SMALL_BLOCK, NULL, FALSE, EDIT_NONE, refresh_job,
 	 create_model_job, admin_edit_job},
+	{G_TYPE_STRING, SORTID_TRES, "TRES", FALSE,
+	 EDIT_NONE, refresh_job, create_model_job, admin_edit_job},
 	{G_TYPE_INT, SORTID_UPDATED, NULL, FALSE, EDIT_NONE, refresh_job,
 	 create_model_job, admin_edit_job},
 	{G_TYPE_NONE, -1, NULL, FALSE, EDIT_NONE}
@@ -951,6 +970,14 @@ static const char *_set_job_msg(job_desc_msg_t *job_msg, const char *new_text,
 			goto return_error;
 		job_msg->core_spec = (uint16_t)temp_int;
 		break;
+	case SORTID_THREAD_SPEC:
+		temp_int = strtol(new_text, (char **)NULL, 10);
+
+		type = "specialized threads";
+		if (temp_int <= 0)
+			goto return_error;
+		job_msg->core_spec = (uint16_t)temp_int | CORE_SPEC_THREAD;
+		break;
 	case SORTID_REBOOT:
 		if (!strcasecmp(new_text, "yes"))
 			job_msg->reboot = 1;
@@ -985,9 +1012,17 @@ static const char *_set_job_msg(job_desc_msg_t *job_msg, const char *new_text,
 		job_msg->licenses = xstrdup(new_text);
 		type = "licenses";
 		break;
+	case SORTID_MCS_LABEL:
+		job_msg->mcs_label = xstrdup(new_text);
+		type = "mcs_label";
+		break;
 	case SORTID_ACCOUNT:
 		job_msg->account = xstrdup(new_text);
 		type = "account";
+		break;
+	case SORTID_BURST_BUFFER:
+		job_msg->burst_buffer = xstrdup(new_text);
+		type = "burst buffer";
 		break;
 	case SORTID_QOS:
 		job_msg->qos = xstrdup(new_text);
@@ -1140,6 +1175,14 @@ static const char *_set_job_msg(job_desc_msg_t *job_msg, const char *new_text,
 		if (job_msg->begin_time < time(NULL))
 			job_msg->begin_time = time(NULL);
 		break;
+	case SORTID_DEADLINE:
+		type = "deadline";
+		job_msg->deadline = parse_time((char *)new_text, 0);
+		if (!job_msg->deadline)
+			goto return_error;
+		if (job_msg->deadline < time(NULL))
+			goto return_error;
+		break;
 	case SORTID_STD_OUT:
 		type = "StdOut";
 		job_msg->std_out = xstrdup(new_text);
@@ -1275,44 +1318,6 @@ static int _nodes_in_list(char *node_list)
 	return count;
 }
 
-static int _get_node_cnt(job_info_t * job)
-{
-	int node_cnt = 0;
-
-	/*  For PENDING jobs, return the maximum of the requested nodelist,
-	 *   requested maximum number of nodes, or requested CPUs rounded
-	 *   to nearest node.
-	 *
-	 *  For COMPLETING jobs, the job->nodes nodelist has already been
-	 *   altered to list only the nodes still in the comp state, and
-	 *   thus we count only those nodes toward the total nodes still
-	 *   allocated to this job.
-	 */
-
-	if (IS_JOB_PENDING(job)) {
-		node_cnt = _nodes_in_list(job->req_nodes);
-		node_cnt = MAX(node_cnt, job->num_nodes);
-		if ((node_cnt == 1) && (job->num_cpus > 1)
-		    && job->ntasks_per_node
-		    && (job->ntasks_per_node != (uint16_t) NO_VAL)) {
-			int num_tasks = job->num_cpus;
-			if (job->cpus_per_task != (uint16_t) NO_VAL)
-				num_tasks /= job->cpus_per_task;
-			node_cnt = (num_tasks + 1) / job->ntasks_per_node;
-			if (node_cnt > num_tasks)
-				node_cnt = num_tasks;
-			else if (!node_cnt)
-				node_cnt = 1;
-		} else if (sview_max_cpus) {
-			int round  = job->num_cpus + sview_max_cpus - 1;
-			round /= sview_max_cpus;	/* round up */
-			node_cnt = MAX(node_cnt, round);
-		}
-	} else
-		node_cnt = _nodes_in_list(job->nodes);
-	return node_cnt;
-}
-
 /* this needs to be freed by xfree() */
 static void _convert_char_to_job_and_step(const char *data,
 					  int *jobid, int *stepid)
@@ -1341,7 +1346,7 @@ static void _layout_job_record(GtkTreeView *treeview,
 			       int update)
 {
 	char *nodes = NULL, *reason = NULL, *uname = NULL;
-	char tmp_char[50];
+	char tmp_char[64];
 	char time_buf[32];
 	char tmp1[128];
 	char running_char[50];
@@ -1359,7 +1364,8 @@ static void _layout_job_record(GtkTreeView *treeview,
 	if (!treestore)
 		return;
 
-	if (!job_ptr->nodes || !strcasecmp(job_ptr->nodes,"waiting...")) {
+	if (!job_ptr->nodes || IS_JOB_PENDING(job_ptr) ||
+	    !strcasecmp(job_ptr->nodes,"waiting...")) {
 		sprintf(running_char,"00:00:00");
 		nodes = "waiting...";
 	} else {
@@ -1406,7 +1412,8 @@ static void _layout_job_record(GtkTreeView *treeview,
 						   sizeof(tmp_char),
 						   SELECT_PRINT_DATA));
 
-	if (job_ptr->array_task_id != NO_VAL) {
+	if (job_ptr->array_task_str ||
+	    (job_ptr->array_task_id != NO_VAL)) {
 		snprintf(tmp_char, sizeof(tmp_char), "%u",
 			 job_ptr->array_job_id);
 	} else {
@@ -1417,7 +1424,10 @@ static void _layout_job_record(GtkTreeView *treeview,
 						 SORTID_ARRAY_JOB_ID),
 				   tmp_char);
 
-	if (job_ptr->array_task_id != NO_VAL) {
+	if (job_ptr->array_task_str) {
+		snprintf(tmp_char, sizeof(tmp_char), "[%s]",
+			 job_ptr->array_task_str);
+	} else if (job_ptr->array_task_id != NO_VAL) {
 		snprintf(tmp_char, sizeof(tmp_char), "%u",
 			 job_ptr->array_task_id);
 	} else {
@@ -1441,6 +1451,11 @@ static void _layout_job_record(GtkTreeView *treeview,
 				   find_col_name(display_data_job,
 						 SORTID_BATCH_HOST),
 				   job_ptr->batch_host);
+
+	add_display_treestore_line(update, treestore, &iter,
+				   find_col_name(display_data_job,
+						 SORTID_BURST_BUFFER),
+				   job_ptr->burst_buffer);
 
 	if (cluster_flags & CLUSTER_FLAG_BG) {
 		add_display_treestore_line(update, treestore, &iter,
@@ -1490,7 +1505,12 @@ static void _layout_job_record(GtkTreeView *treeview,
 						 SORTID_CONTIGUOUS),
 				   tmp_char);
 
-	sprintf(tmp_char, "%u", job_ptr->core_spec);
+	if ((job_ptr->core_spec == (uint16_t) NO_VAL) ||
+	    (job_ptr->core_spec & CORE_SPEC_THREAD)) {
+		sprintf(tmp_char, "N/A");
+	} else {
+		sprintf(tmp_char, "%u", job_ptr->core_spec);
+	}
 	add_display_treestore_line(update, treestore, &iter,
 				   find_col_name(display_data_job,
 						 SORTID_CORE_SPEC),
@@ -1499,7 +1519,7 @@ static void _layout_job_record(GtkTreeView *treeview,
 	if (cluster_flags & CLUSTER_FLAG_BG)
 		convert_num_unit((float)job_ptr->num_cpus,
 				 tmp_char, sizeof(tmp_char),
-				 UNIT_NONE);
+				 UNIT_NONE, working_sview_config.convert_flags);
 	else
 		snprintf(tmp_char, sizeof(tmp_char), "%u", job_ptr->num_cpus);
 
@@ -1511,7 +1531,7 @@ static void _layout_job_record(GtkTreeView *treeview,
 	if (cluster_flags & CLUSTER_FLAG_BG)
 		convert_num_unit((float)job_ptr->max_cpus,
 				 tmp_char, sizeof(tmp_char),
-				 UNIT_NONE);
+				 UNIT_NONE, working_sview_config.convert_flags);
 	else
 		snprintf(tmp_char, sizeof(tmp_char), "%u", job_ptr->max_cpus);
 
@@ -1523,7 +1543,7 @@ static void _layout_job_record(GtkTreeView *treeview,
 	if (cluster_flags & CLUSTER_FLAG_BG)
 		convert_num_unit((float)job_ptr->num_cpus,
 				 tmp_char, sizeof(tmp_char),
-				 UNIT_NONE);
+				 UNIT_NONE, working_sview_config.convert_flags);
 	else
 		snprintf(tmp_char, sizeof(tmp_char), "%u", job_ptr->num_cpus);
 
@@ -1539,6 +1559,15 @@ static void _layout_job_record(GtkTreeView *treeview,
 	add_display_treestore_line(update, treestore, &iter,
 				   find_col_name(display_data_job,
 						 SORTID_CPUS_PER_TASK),
+				   tmp_char);
+	if (job_ptr->deadline)
+		slurm_make_time_str((time_t *)&job_ptr->deadline, tmp_char,
+				     sizeof(tmp_char));
+	else
+		sprintf(tmp_char, "N/A");
+	add_display_treestore_line(update, treestore, &iter,
+				   find_col_name(display_data_job,
+						 SORTID_DEADLINE),
 				   tmp_char);
 
 	add_display_treestore_line(update, treestore, &iter,
@@ -1636,7 +1665,11 @@ static void _layout_job_record(GtkTreeView *treeview,
 						   SELECT_PRINT_RAMDISK_IMAGE));
 	}
 
-	if (job_ptr->array_task_id != NO_VAL) {
+	if (job_ptr->array_task_str) {
+		snprintf(tmp_char, sizeof(tmp_char), "%u_[%s] (%u)",
+			 job_ptr->array_job_id, job_ptr->array_task_str,
+			 job_ptr->job_id);
+	} else if (job_ptr->array_task_id != NO_VAL) {
 		snprintf(tmp_char, sizeof(tmp_char), "%u_%u (%u)",
 			 job_ptr->array_job_id, job_ptr->array_task_id,
 			 job_ptr->job_id);
@@ -1653,8 +1686,15 @@ static void _layout_job_record(GtkTreeView *treeview,
 						 SORTID_LICENSES),
 				   job_ptr->licenses);
 
+	add_display_treestore_line(update, treestore, &iter,
+				   find_col_name(display_data_job,
+						 SORTID_MCS_LABEL),
+				   (job_ptr->mcs_label==NULL) ? "N/A" :
+						 job_ptr->mcs_label);
+
 	convert_num_unit((float)job_ptr->pn_min_cpus,
-			 tmp_char, sizeof(tmp_char), UNIT_NONE);
+			 tmp_char, sizeof(tmp_char), UNIT_NONE,
+			 working_sview_config.convert_flags);
 	add_display_treestore_line(update, treestore, &iter,
 				   find_col_name(display_data_job,
 						 SORTID_CPU_REQ),
@@ -1667,7 +1707,8 @@ static void _layout_job_record(GtkTreeView *treeview,
 	if (min_mem > 0) {
 		int len;
 		convert_num_unit((float)min_mem,
-				 tmp_char, sizeof(tmp_char), UNIT_MEGA);
+				 tmp_char, sizeof(tmp_char), UNIT_MEGA,
+				 working_sview_config.convert_flags);
 		len = strlen(tmp_char);
 		if (job_ptr->pn_min_memory & MEM_PER_CPU)
 			sprintf(tmp_char+len, " Per CPU");
@@ -1682,7 +1723,8 @@ static void _layout_job_record(GtkTreeView *treeview,
 
 	if (job_ptr->pn_min_tmp_disk > 0)
 		convert_num_unit((float)job_ptr->pn_min_tmp_disk,
-				 tmp_char, sizeof(tmp_char), UNIT_MEGA);
+				 tmp_char, sizeof(tmp_char), UNIT_MEGA,
+				 working_sview_config.convert_flags);
 	else
 		sprintf(tmp_char, " ");
 	add_display_treestore_line(update, treestore, &iter,
@@ -1700,10 +1742,8 @@ static void _layout_job_record(GtkTreeView *treeview,
 						 SORTID_NETWORK),
 				   job_ptr->network);
 
-	if (job_ptr->nice > 0)
-		sprintf(tmp_char, "%u", job_ptr->nice - NICE_OFFSET);
-	else
-		sprintf(tmp_char, " ");
+	snprintf(tmp_char, sizeof(tmp_char), "%"PRIi64,
+		 (((int64_t)job_ptr->nice) - NICE_OFFSET));
 	add_display_treestore_line(update, treestore, &iter,
 				   find_col_name(display_data_job,
 						 SORTID_NICE),
@@ -1730,7 +1770,8 @@ static void _layout_job_record(GtkTreeView *treeview,
 
 	if (cluster_flags & CLUSTER_FLAG_BG)
 		convert_num_unit((float)sview_job_info_ptr->node_cnt,
-				 tmp_char, sizeof(tmp_char), UNIT_NONE);
+				 tmp_char, sizeof(tmp_char), UNIT_NONE,
+				 working_sview_config.convert_flags);
 	else
 		snprintf(tmp_char, sizeof(tmp_char), "%u",
 			 sview_job_info_ptr->node_cnt);
@@ -1742,7 +1783,8 @@ static void _layout_job_record(GtkTreeView *treeview,
 
 	if (cluster_flags & CLUSTER_FLAG_BG)
 		convert_num_unit((float)sview_job_info_ptr->node_cnt,
-				 tmp_char, sizeof(tmp_char), UNIT_NONE);
+				 tmp_char, sizeof(tmp_char), UNIT_NONE,
+				 working_sview_config.convert_flags);
 	else
 		snprintf(tmp_char, sizeof(tmp_char), "%u",
 			 job_ptr->max_nodes);
@@ -1754,10 +1796,11 @@ static void _layout_job_record(GtkTreeView *treeview,
 
 	if (cluster_flags & CLUSTER_FLAG_BG)
 		convert_num_unit((float)sview_job_info_ptr->node_cnt,
-				 tmp_char, sizeof(tmp_char), UNIT_NONE);
+				 tmp_char, sizeof(tmp_char), UNIT_NONE,
+				 working_sview_config.convert_flags);
 	else
 		snprintf(tmp_char, sizeof(tmp_char), "%u",
-			 job_ptr->num_nodes);
+			 sview_job_info_ptr->node_cnt);
 
 	add_display_treestore_line(update, treestore, &iter,
 				   find_col_name(display_data_job,
@@ -1768,6 +1811,16 @@ static void _layout_job_record(GtkTreeView *treeview,
 				   find_col_name(display_data_job,
 						 SORTID_PARTITION),
 				   job_ptr->partition);
+
+	if (job_ptr->preempt_time) {
+		slurm_make_time_str((time_t *)&job_ptr->preempt_time, tmp_char,
+				    sizeof(tmp_char));
+	} else
+		sprintf(tmp_char, "N/A");
+	add_display_treestore_line(update, treestore, &iter,
+				   find_col_name(display_data_job,
+						 SORTID_PREEMPT_TIME),
+				   tmp_char);
 
 	sprintf(tmp_char, "%u", job_ptr->priority);
 	add_display_treestore_line(update, treestore, &iter,
@@ -1826,10 +1879,16 @@ static void _layout_job_record(GtkTreeView *treeview,
 						   sizeof(tmp_char),
 						   SELECT_PRINT_ROTATE));
 
-	if (job_ptr->shared)
-		sprintf(tmp_char, "yes");
-	else
+	if (job_ptr->shared == JOB_SHARED_NONE)
 		sprintf(tmp_char, "no");
+	else if (job_ptr->shared == JOB_SHARED_OK)
+		sprintf(tmp_char, "no");
+	else if (job_ptr->shared == JOB_SHARED_USER)
+		sprintf(tmp_char, "user");
+	else if (job_ptr->shared == JOB_SHARED_MCS)
+		sprintf(tmp_char, "mcs");
+	else
+		sprintf(tmp_char, "ok");
 	add_display_treestore_line(update, treestore, &iter,
 				   find_col_name(display_data_job,
 						 SORTID_SHARED),
@@ -1867,6 +1926,18 @@ static void _layout_job_record(GtkTreeView *treeview,
 						 SORTID_SWITCHES),
 				   tmp_char);
 
+	if ((job_ptr->core_spec == (uint16_t) NO_VAL) ||
+	    ((job_ptr->core_spec & CORE_SPEC_THREAD) == 0)) {
+		sprintf(tmp_char, "N/A");
+	} else {
+		sprintf(tmp_char, "%u",
+			job_ptr->core_spec & (~CORE_SPEC_THREAD));
+	}
+	add_display_treestore_line(update, treestore, &iter,
+				   find_col_name(display_data_job,
+						 SORTID_THREAD_SPEC),
+				   tmp_char);
+
 	slurm_make_time_str((time_t *)&job_ptr->eligible_time, tmp_char,
 			    sizeof(tmp_char));
 	add_display_treestore_line(update, treestore, &iter,
@@ -1894,16 +1965,6 @@ static void _layout_job_record(GtkTreeView *treeview,
 	add_display_treestore_line(update, treestore, &iter,
 				   find_col_name(display_data_job,
 						 SORTID_TIMELIMIT),
-				   tmp_char);
-
-	if (job_ptr->preempt_time) {
-		slurm_make_time_str((time_t *)&job_ptr->preempt_time, tmp_char,
-				    sizeof(tmp_char));
-	} else
-		sprintf(tmp_char, "N/A");
-	add_display_treestore_line(update, treestore, &iter,
-				   find_col_name(display_data_job,
-						 SORTID_PREEMPT_TIME),
 				   tmp_char);
 
 	if (job_ptr->resize_time) {
@@ -1939,11 +2000,15 @@ static void _layout_job_record(GtkTreeView *treeview,
 						 SORTID_TIME_SUSPEND),
 				   tmp_char);
 
-	uname = uid_to_string((uid_t)job_ptr->user_id);
+	add_display_treestore_line(update, treestore, &iter,
+				   find_col_name(display_data_job,
+						 SORTID_TRES),
+				   job_ptr->tres_alloc_str);
+
+	uname = uid_to_string_cached((uid_t)job_ptr->user_id);
 	add_display_treestore_line(update, treestore, &iter,
 				   find_col_name(display_data_job,
 						 SORTID_USER_ID), uname);
-	xfree(uname);
 
 	add_display_treestore_line(update, treestore, &iter,
 				   find_col_name(display_data_job,
@@ -1973,6 +2038,7 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 	char tmp_prio[40],      tmp_nice[40],        tmp_preempt_time[40];
 	char tmp_rqswitch[40],  tmp_core_spec[40],   tmp_job_id[400];
 	char tmp_std_err[128],  tmp_std_in[128],     tmp_std_out[128];
+	char tmp_thread_spec[40], tmp_time_deadline[40];
 	char *tmp_batch,  *tmp_cont, *tmp_shared, *tmp_requeue, *tmp_uname;
 	char *tmp_reboot, *tmp_reason, *tmp_nodes;
 	char time_buf[32];
@@ -2018,21 +2084,27 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 			xstrdup(tmp_job_id);
 	}
 
-	if (handle_pending && (job_ptr->array_task_id != NO_VAL)) {
+	if (handle_pending &&
+	    (job_ptr->array_task_str || (job_ptr->array_task_id != NO_VAL))) {
 		snprintf(tmp_job_id, sizeof(tmp_job_id),  "%s",
 			 sview_job_info_ptr->task_pending_hl_str);
-
 		snprintf(tmp_array_job_id,  sizeof(tmp_array_job_id),  "N/A");
 		snprintf(tmp_array_task_id, sizeof(tmp_array_task_id), "%s",
 			 sview_job_info_ptr->task_pending_hl_str);
-	} else if (check_task && (job_ptr->array_task_id != NO_VAL)) {
+	} else if (check_task &&
+	    (job_ptr->array_task_str || (job_ptr->array_task_id != NO_VAL))) {
 		snprintf(tmp_job_id, sizeof(tmp_job_id),  "%s",
 			 sview_job_info_ptr->task_hl_str);
-
 		snprintf(tmp_array_job_id,  sizeof(tmp_array_job_id),  "N/A");
 		snprintf(tmp_array_task_id, sizeof(tmp_array_task_id), "%s",
 			 sview_job_info_ptr->task_hl_str);
-
+	} else if (job_ptr->array_task_str) {
+		snprintf(tmp_job_id, sizeof(tmp_job_id),  "%s",
+			 sview_job_info_ptr->job_id_str);
+		snprintf(tmp_array_job_id,  sizeof(tmp_array_job_id),  "%u",
+			 job_ptr->array_job_id);
+		snprintf(tmp_array_task_id, sizeof(tmp_array_task_id), "[%s]",
+			 job_ptr->array_task_str);
 	} else if (job_ptr->array_task_id != NO_VAL) {
 		snprintf(tmp_job_id, sizeof(tmp_job_id),  "%s",
 			 sview_job_info_ptr->job_id_str);
@@ -2057,7 +2129,20 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 	else
 		tmp_cont = "no";
 
-	sprintf(tmp_core_spec, "%u", job_ptr->core_spec);
+	if ((job_ptr->core_spec == (uint16_t) NO_VAL) ||
+	    (job_ptr->core_spec & CORE_SPEC_THREAD)) {
+		sprintf(tmp_core_spec, "N/A");
+	} else {
+		sprintf(tmp_core_spec, "%u", job_ptr->core_spec);
+	}
+	if ((job_ptr->core_spec == (uint16_t) NO_VAL) ||
+	    ((job_ptr->core_spec & CORE_SPEC_THREAD) == 0)) {
+		sprintf(tmp_thread_spec, "N/A");
+	} else {
+		sprintf(tmp_thread_spec, "%u",
+			job_ptr->core_spec & (~CORE_SPEC_THREAD));
+	}
+
 
 	if (job_ptr->cpus_per_task > 0)
 		sprintf(tmp_cpus_per_task, "%u", job_ptr->cpus_per_task);
@@ -2067,26 +2152,28 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 	if (cluster_flags & CLUSTER_FLAG_BG) {
 		convert_num_unit((float)job_ptr->num_cpus,
 				 tmp_cpu_cnt, sizeof(tmp_cpu_cnt),
-				 UNIT_NONE);
+				 UNIT_NONE, working_sview_config.convert_flags);
 	} else {
 		snprintf(tmp_cpu_cnt, sizeof(tmp_cpu_cnt), "%u",
 			 job_ptr->num_cpus);
 	}
 
 	convert_num_unit((float)job_ptr->pn_min_cpus,
-			 tmp_cpu_req, sizeof(tmp_cpu_req), UNIT_NONE);
+			 tmp_cpu_req, sizeof(tmp_cpu_req), UNIT_NONE,
+			 working_sview_config.convert_flags);
 
 	if (cluster_flags & CLUSTER_FLAG_BG) {
 		convert_num_unit((float)job_ptr->max_cpus,
 				 tmp_cpus_max, sizeof(tmp_cpus_max),
-				 UNIT_NONE);
+				 UNIT_NONE, working_sview_config.convert_flags);
 	} else {
 		snprintf(tmp_cpus_max, sizeof(tmp_cpus_max), "%u",
 			 job_ptr->max_cpus);
 	}
 
 	convert_num_unit((float)job_ptr->pn_min_tmp_disk,
-			 tmp_disk, sizeof(tmp_disk), UNIT_MEGA);
+			 tmp_disk, sizeof(tmp_disk), UNIT_MEGA,
+			 working_sview_config.convert_flags);
 
 	if (WIFSIGNALED(job_ptr->derived_ec))
 		term_sig = WTERMSIG(job_ptr->derived_ec);
@@ -2116,7 +2203,8 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 	if (min_mem > 0) {
 		int len;
 		convert_num_unit((float)min_mem,
-				 tmp_mem_min, sizeof(tmp_mem_min), UNIT_MEGA);
+				 tmp_mem_min, sizeof(tmp_mem_min), UNIT_MEGA,
+				 working_sview_config.convert_flags);
 		len = strlen(tmp_mem_min);
 		if (job_ptr->pn_min_memory & MEM_PER_CPU)
 			sprintf(tmp_mem_min+len, " Per CPU");
@@ -2127,7 +2215,8 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 
 	if (cluster_flags & CLUSTER_FLAG_BG)
 		convert_num_unit((float)sview_job_info_ptr->node_cnt,
-				 tmp_node_cnt, sizeof(tmp_node_cnt), UNIT_NONE);
+				 tmp_node_cnt, sizeof(tmp_node_cnt), UNIT_NONE,
+				 working_sview_config.convert_flags);
 	else
 		sprintf(tmp_node_cnt, "%u", sview_job_info_ptr->node_cnt);
 
@@ -2153,9 +2242,11 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 	else
 		tmp_shared = "no";
 
-	sprintf(tmp_nice, "%u", job_ptr->nice - NICE_OFFSET);
+	snprintf(tmp_nice, sizeof(tmp_nice), "%"PRIi64,
+		 (((int64_t)job_ptr->nice) - NICE_OFFSET));
 
-	if (!job_ptr->nodes || !strcasecmp(job_ptr->nodes,"waiting...")) {
+	if (!job_ptr->nodes || IS_JOB_PENDING(job_ptr) ||
+	    !strcasecmp(job_ptr->nodes,"waiting...")) {
 		sprintf(tmp_time_run,"00:00:00");
 		tmp_nodes = "waiting...";
 	} else {
@@ -2222,6 +2313,12 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 	slurm_make_time_str((time_t *)&job_ptr->submit_time, tmp_time_submit,
 			    sizeof(tmp_time_submit));
 
+	if (job_ptr->deadline)
+		slurm_make_time_str((time_t *)&job_ptr->deadline, tmp_time_deadline,
+				     sizeof(tmp_time_deadline));
+	else
+		sprintf(tmp_time_deadline, "N/A");
+
 	slurm_get_job_stderr(tmp_std_err, sizeof(tmp_std_err), job_ptr);
 
 	slurm_get_job_stdin(tmp_std_in, sizeof(tmp_std_in), job_ptr);
@@ -2244,10 +2341,10 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 		sprintf(tmp_rqswitch, "N/A");
 	}
 
-	tmp_uname = uid_to_string((uid_t)job_ptr->user_id);
+	tmp_uname = uid_to_string_cached((uid_t)job_ptr->user_id);
 
-	if ((handle_pending || check_task)
-	    && (job_ptr->array_task_id != NO_VAL)) {
+	if ((handle_pending || check_task) &&
+	    (job_ptr->array_task_str || (job_ptr->array_task_id != NO_VAL))) {
 		gtk_tree_store_set(treestore, iter,
 				   SORTID_ACCOUNT,      job_ptr->account,
 				   SORTID_ALLOC,        1,
@@ -2256,6 +2353,7 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 				   SORTID_ARRAY_TASK_ID,tmp_array_task_id,
 				   SORTID_BATCH,        tmp_batch,
 				   SORTID_BATCH_HOST,   job_ptr->batch_host,
+				   SORTID_BURST_BUFFER, job_ptr->burst_buffer,
 				   SORTID_COLOR,
 				   sview_colors[sview_job_info_ptr->color_inx],
 				   SORTID_COLOR_INX,
@@ -2264,6 +2362,7 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 				   SORTID_COMMENT,      job_ptr->comment,
 				   SORTID_CONTIGUOUS,   tmp_cont,
 				   SORTID_JOBID,        tmp_job_id,
+				   SORTID_JOBID_FORMATTED, tmp_job_id,
 				   SORTID_PARTITION,    job_ptr->partition,
 				   SORTID_UPDATED,      1,
 				   SORTID_USER_ID,      tmp_uname,
@@ -2283,6 +2382,7 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 				   SORTID_ARRAY_TASK_ID,tmp_array_task_id,
 				   SORTID_BATCH,        tmp_batch,
 				   SORTID_BATCH_HOST,   job_ptr->batch_host,
+				   SORTID_BURST_BUFFER, job_ptr->burst_buffer,
 				   SORTID_COLOR,
 				   sview_colors[sview_job_info_ptr->color_inx],
 				   SORTID_COLOR_INX,
@@ -2296,6 +2396,7 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 				   SORTID_CPU_MIN,      tmp_cpu_cnt,
 				   SORTID_CPUS_PER_TASK,tmp_cpus_per_task,
 				   SORTID_CPU_REQ,      tmp_cpu_req,
+				   SORTID_DEADLINE,     tmp_time_deadline,
 				   SORTID_DEPENDENCY,   job_ptr->dependency,
 				   SORTID_DERIVED_EC,   tmp_derived_ec,
 				   SORTID_EXIT_CODE,    tmp_exit,
@@ -2303,7 +2404,9 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 				   SORTID_GRES,         job_ptr->gres,
 				   SORTID_GROUP_ID,     tmp_group_id,
 				   SORTID_JOBID,        tmp_job_id,
+				   SORTID_JOBID_FORMATTED, tmp_job_id,
 				   SORTID_LICENSES,     job_ptr->licenses,
+				   SORTID_MCS_LABEL,	job_ptr->mcs_label,
 				   SORTID_MEM_MIN,      tmp_mem_min,
 				   SORTID_NAME,         job_ptr->name,
 				   SORTID_NICE,         tmp_nice,
@@ -2333,6 +2436,7 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 				   SORTID_STD_IN,       tmp_std_in,
 				   SORTID_STD_OUT,      tmp_std_out,
 				   SORTID_SWITCHES,     tmp_rqswitch,
+				   SORTID_THREAD_SPEC,  tmp_thread_spec,
 				   SORTID_TIME_ELIGIBLE,tmp_time_elig,
 				   SORTID_TIME_END,     tmp_time_end,
 				   SORTID_TIME_RESIZE,  tmp_time_resize,
@@ -2342,13 +2446,13 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 				   SORTID_TIME_SUSPEND, tmp_time_sus,
 				   SORTID_TIMELIMIT,    tmp_time_limit,
 				   SORTID_TMP_DISK,     tmp_disk,
+				   SORTID_TRES,         job_ptr->tres_alloc_str,
 				   SORTID_UPDATED,      1,
 				   SORTID_USER_ID,      tmp_uname,
 				   SORTID_WCKEY,        job_ptr->wckey,
 				   SORTID_WORKDIR,      job_ptr->work_dir,
 				   -1);
 	}
-	xfree(tmp_uname);
 
 	gtk_tree_store_set(treestore, iter,
 			   SORTID_NETWORK, job_ptr->network, -1);
@@ -2422,7 +2526,8 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 				   -1);
 	}
 
-	if (check_task && (job_ptr->array_task_id != NO_VAL)) {
+	if (check_task &&
+	    (job_ptr->array_task_str || (job_ptr->array_task_id != NO_VAL))) {
 		if (gtk_tree_model_iter_children(GTK_TREE_MODEL(treestore),
 						 &step_iter,
 						 iter))
@@ -2433,7 +2538,9 @@ static void _update_job_record(sview_job_info_t *sview_job_info_ptr,
 			_update_info_task(sview_job_info_ptr,
 					  GTK_TREE_MODEL(treestore), NULL,
 					  iter, false);
-	} else if (handle_pending && (job_ptr->array_task_id != NO_VAL)) {
+	} else if (handle_pending &&
+		   (job_ptr->array_task_str ||
+		    (job_ptr->array_task_id != NO_VAL))) {
 		if (gtk_tree_model_iter_children(GTK_TREE_MODEL(treestore),
 						 &step_iter,
 						 iter))
@@ -2483,13 +2590,12 @@ static void _get_step_nodelist(job_step_info_t *step_ptr, char *buf,
 
 static void _layout_step_record(GtkTreeView *treeview,
 				job_step_info_t *step_ptr,
-				int update)
+				int update, bool suspended)
 {
 	char *uname;
 	char tmp_char[50], tmp_nodes[50], tmp_time[50];
-	time_t now_time = time(NULL);
 	GtkTreeIter iter;
-	enum job_states state;
+	uint32_t state;
 	GtkTreeStore *treestore =
 		GTK_TREE_STORE(gtk_tree_view_get_model(treeview));
 
@@ -2497,17 +2603,16 @@ static void _layout_step_record(GtkTreeView *treeview,
 		return;
 
 	convert_num_unit((float)step_ptr->num_cpus, tmp_char, sizeof(tmp_char),
-			 UNIT_NONE);
+			 UNIT_NONE, working_sview_config.convert_flags);
 	add_display_treestore_line(update, treestore, &iter,
 				   find_col_name(display_data_job,
 						 SORTID_CPUS),
 				   tmp_char);
 
-	uname = uid_to_string((uid_t)step_ptr->user_id);
+	uname = uid_to_string_cached((uid_t)step_ptr->user_id);
 	add_display_treestore_line(update, treestore, &iter,
 				   find_col_name(display_data_job,
 						 SORTID_USER_ID), uname);
-	xfree(uname);
 
 	if (step_ptr->array_job_id) {
 		snprintf(tmp_char, sizeof(tmp_char), "%u_%u.%u (%u.%u)",
@@ -2533,14 +2638,19 @@ static void _layout_step_record(GtkTreeView *treeview,
 						 SORTID_NAME),
 				   step_ptr->name);
 
+
+	if (suspended)
+		state = JOB_SUSPENDED;
+	else
+		state = step_ptr->state;
+
 	if (!step_ptr->nodes
 	    || !strcasecmp(step_ptr->nodes, "waiting...")) {
 		sprintf(tmp_time,"00:00:00");
 		snprintf(tmp_nodes, sizeof(tmp_nodes), "waiting...");
 		state = JOB_PENDING;
 	} else {
-		now_time -= step_ptr->start_time;
-		secs2time_str(now_time, tmp_time, sizeof(tmp_time));
+		secs2time_str(step_ptr->run_time, tmp_time, sizeof(tmp_time));
 		_get_step_nodelist(step_ptr, tmp_nodes, sizeof(tmp_nodes));
 		if (cluster_flags & CLUSTER_FLAG_BGQ) {
 			uint32_t nodes = 0;
@@ -2549,20 +2659,22 @@ static void _layout_step_record(GtkTreeView *treeview,
 						    &nodes);
 			convert_num_unit(
 				(float)nodes,
-				tmp_char, sizeof(tmp_char), UNIT_NONE);
+				tmp_char, sizeof(tmp_char), UNIT_NONE,
+				working_sview_config.convert_flags);
 		} else if (cluster_flags & CLUSTER_FLAG_BG)
 			convert_num_unit(
 				(float)step_ptr->num_tasks / cpus_per_node,
-				tmp_char, sizeof(tmp_char), UNIT_NONE);
+				tmp_char, sizeof(tmp_char), UNIT_NONE,
+				working_sview_config.convert_flags);
 		else {
 			convert_num_unit((float)_nodes_in_list(tmp_nodes),
-					 tmp_char, sizeof(tmp_char), UNIT_NONE);
+					 tmp_char, sizeof(tmp_char), UNIT_NONE,
+					 working_sview_config.convert_flags);
 		}
 		add_display_treestore_line(update, treestore, &iter,
 					   find_col_name(display_data_job,
 							 SORTID_NODES),
 					   tmp_char);
-		state = JOB_RUNNING;
 	}
 
 	add_display_treestore_line(update, treestore, &iter,
@@ -2598,28 +2710,38 @@ static void _layout_step_record(GtkTreeView *treeview,
 				   tmp_time);
 
 	convert_num_unit((float)step_ptr->num_tasks, tmp_char, sizeof(tmp_char),
-			 UNIT_NONE);
+			 UNIT_NONE, working_sview_config.convert_flags);
 	add_display_treestore_line(update, treestore, &iter,
 				   find_col_name(display_data_job,
 						 SORTID_TASKS),
 				   tmp_char);
+
+	add_display_treestore_line(update, treestore, &iter,
+				   find_col_name(display_data_job,
+						 SORTID_TRES),
+				   step_ptr->tres_alloc_str);
 }
 
 static void _update_step_record(job_step_info_t *step_ptr,
 				GtkTreeStore *treestore,
-				GtkTreeIter *iter)
+				GtkTreeIter *iter, bool suspended)
 {
 	char *tmp_uname;
 	char tmp_nodes[50];
 	char tmp_cpu_min[40],  tmp_time_run[40],   tmp_time_limit[40];
 	char tmp_node_cnt[40], tmp_time_start[40], tmp_task_cnt[40];
-	char tmp_step_id[40];
-	time_t now_time = time(NULL);
-	enum job_states state;
+	char tmp_step_id[40], tmp_job_id[400];
+	uint32_t state;
 	int color_inx = step_ptr->step_id % sview_colors_cnt;
 
 	convert_num_unit((float)step_ptr->num_cpus, tmp_cpu_min,
-			 sizeof(tmp_cpu_min), UNIT_NONE);
+			 sizeof(tmp_cpu_min), UNIT_NONE,
+			 working_sview_config.convert_flags);
+
+	if (suspended)
+		state = JOB_SUSPENDED;
+	else
+		state = step_ptr->state;
 
 	if (!step_ptr->nodes ||
 	    !strcasecmp(step_ptr->nodes,"waiting...")) {
@@ -2628,8 +2750,8 @@ static void _update_step_record(job_step_info_t *step_ptr,
 		tmp_node_cnt[0] = '\0';
 		state = JOB_PENDING;
 	} else {
-		now_time -= step_ptr->start_time;
-		secs2time_str(now_time, tmp_time_run, sizeof(tmp_time_run));
+		secs2time_str(step_ptr->run_time,
+			      tmp_time_run, sizeof(tmp_time_run));
 		_get_step_nodelist(step_ptr, tmp_nodes, sizeof(tmp_nodes));
 		if (cluster_flags & CLUSTER_FLAG_BGQ) {
 			uint32_t nodes = 0;
@@ -2637,21 +2759,24 @@ static void _update_step_record(job_step_info_t *step_ptr,
 						    SELECT_JOBDATA_NODE_CNT,
 						    &nodes);
 			convert_num_unit((float)nodes, tmp_node_cnt,
-					 sizeof(tmp_node_cnt), UNIT_NONE);
+					 sizeof(tmp_node_cnt), UNIT_NONE,
+					 working_sview_config.convert_flags);
 		} else if (cluster_flags & CLUSTER_FLAG_BG) {
 			convert_num_unit(
 				(float)step_ptr->num_tasks / cpus_per_node,
-				tmp_node_cnt, sizeof(tmp_node_cnt), UNIT_NONE);
+				tmp_node_cnt, sizeof(tmp_node_cnt), UNIT_NONE,
+				working_sview_config.convert_flags);
 		} else {
 			convert_num_unit((float)_nodes_in_list(tmp_nodes),
 					 tmp_node_cnt, sizeof(tmp_node_cnt),
-					 UNIT_NONE);
+					 UNIT_NONE,
+					 working_sview_config.convert_flags);
 		}
-		state = JOB_RUNNING;
 	}
 
 	convert_num_unit((float)step_ptr->num_tasks, tmp_task_cnt,
-			 sizeof(tmp_task_cnt), UNIT_NONE);
+			 sizeof(tmp_task_cnt), UNIT_NONE,
+			 working_sview_config.convert_flags);
 
 	if ((step_ptr->time_limit == NO_VAL) ||
 	    (step_ptr->time_limit == INFINITE)) {
@@ -2665,8 +2790,17 @@ static void _update_step_record(job_step_info_t *step_ptr,
 			    sizeof(tmp_time_start));
 
 	snprintf(tmp_step_id, sizeof(tmp_step_id), "%u", step_ptr->step_id);
+	if (step_ptr->array_job_id) {
+		snprintf(tmp_job_id, sizeof(tmp_job_id), "%u_%u.%u (%u.%u)",
+			 step_ptr->array_job_id, step_ptr->array_task_id,
+			 step_ptr->step_id,
+			 step_ptr->job_id, step_ptr->step_id);
+	} else {
+		snprintf(tmp_job_id, sizeof(tmp_job_id), "%u.%u",
+			 step_ptr->job_id, step_ptr->step_id);
+	}
 
-	tmp_uname = uid_to_string((uid_t)step_ptr->user_id);
+	tmp_uname = uid_to_string_cached((uid_t)step_ptr->user_id);
 
 	gtk_tree_store_set(treestore, iter,
 			   SORTID_ALLOC,        0,
@@ -2675,6 +2809,7 @@ static void _update_step_record(job_step_info_t *step_ptr,
 			   SORTID_CPUS,         tmp_cpu_min,
 			   SORTID_GRES,         step_ptr->gres,
 			   SORTID_JOBID,        tmp_step_id,
+			   SORTID_JOBID_FORMATTED, tmp_job_id,
 			   SORTID_NAME,         step_ptr->name,
 			   SORTID_NODE_INX,     step_ptr->node_inx,
 			   SORTID_NODELIST,     tmp_nodes,
@@ -2685,11 +2820,11 @@ static void _update_step_record(job_step_info_t *step_ptr,
 			   SORTID_TIME_RUNNING, tmp_time_run,
 			   SORTID_TIME_START,   tmp_time_start,
 			   SORTID_TIMELIMIT,    tmp_time_limit,
+			   SORTID_TRES,         step_ptr->tres_alloc_str,
 			   SORTID_UPDATED,      1,
 			   SORTID_USER_ID,      tmp_uname,
 			   -1);
 
-	xfree(tmp_uname);
 
 	return;
 }
@@ -2719,13 +2854,13 @@ static void _append_task_record(sview_job_info_t *sview_job_info_ptr,
 
 static void _append_step_record(job_step_info_t *step_ptr,
 				GtkTreeStore *treestore, GtkTreeIter *iter,
-				int jobid)
+				int jobid, bool suspended)
 {
 	GtkTreeIter step_iter;
 
 	gtk_tree_store_append(treestore, &step_iter, iter);
 	gtk_tree_store_set(treestore, &step_iter, SORTID_POS, jobid, -1);
-	_update_step_record(step_ptr, treestore, &step_iter);
+	_update_step_record(step_ptr, treestore, &step_iter, suspended);
 }
 
 static void _handle_task_check(sview_job_info_t *task_ptr,
@@ -2892,9 +3027,10 @@ static void _update_info_step(sview_job_info_t *sview_job_info_ptr,
 			g_free(tmp_stepid);
 			if (stepid == (int)step_ptr->step_id) {
 				/* update with new info */
-				_update_step_record(step_ptr,
-						    GTK_TREE_STORE(model),
-						    step_iter);
+				_update_step_record(
+					step_ptr, GTK_TREE_STORE(model),
+					step_iter, IS_JOB_SUSPENDED(
+						sview_job_info_ptr->job_ptr));
 				goto found;
 			}
 
@@ -2905,7 +3041,9 @@ static void _update_info_step(sview_job_info_t *sview_job_info_ptr,
 		}
 	adding:
 		_append_step_record(step_ptr, GTK_TREE_STORE(model),
-				    iter, sview_job_info_ptr->job_ptr->job_id);
+				    iter, sview_job_info_ptr->job_ptr->job_id,
+				    IS_JOB_SUSPENDED(
+					    sview_job_info_ptr->job_ptr));
 	found:
 		;
 	}
@@ -2949,7 +3087,7 @@ static void _update_info_job(List info_list,
 		job_ptr = sview_job_info->job_ptr;
 
 		/* This means the tree_store changed (added new column
-		   or something). */
+		 * or something). */
 		if (last_model != model)
 			sview_job_info->iter_set = false;
 
@@ -2957,20 +3095,22 @@ static void _update_info_job(List info_list,
 			char *tmp_jobid = NULL, *offset = NULL;
 			gtk_tree_model_get(model, &sview_job_info->iter_ptr,
 					   SORTID_JOBID, &tmp_jobid, -1);
-			if (tmp_jobid) {
-				offset = strchr(tmp_jobid, '(');
-				if (offset)
-					offset++;
-				else
-					offset = tmp_jobid;
-				jobid = atoi(offset);
-				g_free(tmp_jobid);
-			}
+			if (!tmp_jobid)
+				continue;
+
+			offset = strchr(tmp_jobid, '(');
+			if (offset)
+				offset++;
+			else
+				offset = tmp_jobid;
+			jobid = atoi(offset);
+			g_free(tmp_jobid);
 
 			if ((jobid != job_ptr->job_id)
-			    && (jobid != job_ptr->array_job_id))
+			    && (jobid != job_ptr->array_job_id)) {
 				/* Bad pointer */
 				sview_job_info->iter_set = false;
+			}
 		}
 		if (sview_job_info->iter_set)
 			_update_job_record(sview_job_info,
@@ -3090,13 +3230,19 @@ static List _create_job_info_list(job_info_msg_t *job_info_ptr,
 		sview_job_info_ptr->job_ptr = job_ptr;
 		sview_job_info_ptr->job_id = job_ptr->job_id;
 
-		if (job_ptr->array_task_id != NO_VAL) {
-			char task_str[16];
+		if (job_ptr->array_task_str ||
+		    (job_ptr->array_task_id != NO_VAL)) {
+			char task_str[64];
 			sview_job_info_t *first_job_info_ptr =
 				list_find_first(info_list,
 						_task_array_match, job_ptr);
-			snprintf(task_str, sizeof(task_str), "%u",
-				 job_ptr->array_task_id);
+			if (job_ptr->array_task_str) {
+				snprintf(task_str, sizeof(task_str), "[%s]",
+					 job_ptr->array_task_str);
+			} else {
+				snprintf(task_str, sizeof(task_str), "%u",
+					 job_ptr->array_task_id);
+			}
 
 			if (!first_job_info_ptr) {
 				sview_job_info_ptr->task_list =
@@ -3126,11 +3272,19 @@ static List _create_job_info_list(job_info_msg_t *job_info_ptr,
 			} else if (!IS_JOB_COMPLETED(job_ptr))
 				list_append(first_job_info_ptr->task_list,
 					    sview_job_info_ptr);
-
-			sview_job_info_ptr->job_id_str =
-				xstrdup_printf("%u_%u (%u)",
-				 job_ptr->array_job_id, job_ptr->array_task_id,
-				 job_ptr->job_id);
+			if (job_ptr->array_task_str) {
+				sview_job_info_ptr->job_id_str =
+					xstrdup_printf("%u_[%s] (%u)",
+					 job_ptr->array_job_id,
+					 job_ptr->array_task_str,
+					 job_ptr->job_id);
+			} else {
+				sview_job_info_ptr->job_id_str =
+					xstrdup_printf("%u_%u (%u)",
+					 job_ptr->array_job_id,
+					 job_ptr->array_task_id,
+					 job_ptr->job_id);
+			}
 		} else
 			sview_job_info_ptr->job_id_str =
 				xstrdup_printf("%u", job_ptr->job_id);
@@ -3161,11 +3315,10 @@ static List _create_job_info_list(job_info_msg_t *job_info_ptr,
 					xstrdup(job_ptr->nodes);
 			}
 			xfree(ionodes);
-		} else
+		} else {
 			sview_job_info_ptr->nodes = xstrdup(job_ptr->nodes);
-
-		if (!sview_job_info_ptr->node_cnt)
-			sview_job_info_ptr->node_cnt = _get_node_cnt(job_ptr);
+			sview_job_info_ptr->node_cnt = job_ptr->num_nodes;
+		}
 
 		for (j = 0; j < step_info_ptr->job_step_count; j++) {
 			step_ptr = &(step_info_ptr->job_steps[j]);
@@ -3195,7 +3348,7 @@ static List _create_job_info_list(job_info_msg_t *job_info_ptr,
 
 	if (last_list) {
 		list_iterator_destroy(last_list_itr);
-		list_destroy(last_list);
+		FREE_NULL_LIST(last_list);
 	}
 
 update_color:
@@ -3211,8 +3364,8 @@ void _display_info_job(List info_list, popup_info_t *popup_win)
 {
 	job_step_info_t *step_ptr;
 	specific_info_t *spec_info = popup_win->spec_info;
-	ListIterator itr = NULL;
-	sview_job_info_t *sview_job_info = NULL;
+	ListIterator itr = NULL, itr2 = NULL;
+	sview_job_info_t *sview_job_info = NULL, *sview_job_info2 = NULL;
 	int found = 0;
 	GtkTreeView *treeview = NULL;
 	int update = 0;
@@ -3239,6 +3392,33 @@ need_refresh:
 		if (sview_job_info->job_ptr->job_id ==
 		    spec_info->search_info->int_data)
 			break;
+		if (sview_job_info->task_list) {
+			itr2 = list_iterator_create(sview_job_info->task_list);
+			while ((sview_job_info2 = list_next(itr2))) {
+				if (sview_job_info2->job_ptr->job_id ==
+				    spec_info->search_info->int_data)
+					break;
+			}
+			list_iterator_destroy(itr2);
+			if (sview_job_info2) {
+				sview_job_info = sview_job_info2;
+				break;
+			}
+		}
+		if (sview_job_info->task_pending_list) {
+			itr2 = list_iterator_create(
+				sview_job_info->task_pending_list);
+			while ((sview_job_info2 = list_next(itr2))) {
+				if (sview_job_info2->job_ptr->job_id ==
+				    spec_info->search_info->int_data)
+					break;
+			}
+			list_iterator_destroy(itr2);
+			if (sview_job_info2) {
+				sview_job_info = sview_job_info2;
+				break;
+			}
+		}
 	}
 	list_iterator_destroy(itr);
 
@@ -3305,8 +3485,11 @@ need_refresh:
 					color_set_flag, false, 0);
 				xfree(color_inx);
 				xfree(color_set_flag);
-				_layout_step_record(treeview,
-						    step_ptr, update);
+
+				_layout_step_record(
+					treeview, step_ptr, update,
+					IS_JOB_SUSPENDED(
+						sview_job_info->job_ptr));
 				found = 1;
 				break;
 			}
@@ -3481,7 +3664,9 @@ extern int get_new_info_job_step(job_step_info_response_msg_t **info_ptr,
 	*/
 	show_flags |= SHOW_ALL;
 	if (g_step_info_ptr) {
-		error_code = slurm_get_job_steps(g_step_info_ptr->last_update,
+		/* Use a last_update time of NULL so that we can get an updated
+		 * run_time for jobs rather than just its start_time */
+		error_code = slurm_get_job_steps((time_t) NULL,
 						 NO_VAL, NO_VAL, &new_step_ptr,
 						 show_flags);
 		if (error_code == SLURM_SUCCESS) {
@@ -3617,7 +3802,7 @@ extern void admin_edit_job(GtkCellRendererText *cell,
 	GtkTreePath *path = gtk_tree_path_new_from_string(path_string);
 	GtkTreeIter iter;
 	job_desc_msg_t *job_msg = xmalloc(sizeof(job_desc_msg_t));
-	char *tmp_jobid, *offset;
+	char *tmp_jobid = NULL, *offset;
 
 	char *temp = NULL;
 	char *old_text = NULL;
@@ -3636,6 +3821,9 @@ extern void admin_edit_job(GtkCellRendererText *cell,
 			   SORTID_JOBID, &tmp_jobid,
 			   column, &old_text,
 			   -1);
+	if (!tmp_jobid)
+		goto no_input;
+
 	offset = strchr(tmp_jobid, '(');
 	if (offset)
 		offset++;
@@ -3766,7 +3954,7 @@ extern void get_info_job(GtkTable *table, display_data_t *display_data)
 						     force_refresh))
 	    == SLURM_NO_CHANGE_IN_DATA){
 		if ((!display_widget || view == ERROR_VIEW)
-		    || (job_error_code != SLURM_NO_CHANGE_IN_DATA))
+		    || (step_error_code != SLURM_NO_CHANGE_IN_DATA))
 			goto display_it;
 	} else if (step_error_code != SLURM_SUCCESS) {
 		if (view == ERROR_VIEW)
@@ -3805,7 +3993,7 @@ display_it:
 		bool *color_set_flag = xmalloc(sizeof(bool) * array_size);
 		itr = list_iterator_create(info_list);
 		while ((sview_job_info_ptr = list_next(itr))) {
-			uint16_t base_state;
+			uint32_t base_state;
 			job_ptr = sview_job_info_ptr->job_ptr;
 			base_state = job_ptr->job_state & JOB_STATE_BASE;
 			if (base_state != JOB_RUNNING)
@@ -3838,6 +4026,7 @@ display_it:
 		highlight_grid(GTK_TREE_VIEW(display_widget),
 			       SORTID_NODE_INX, SORTID_COLOR_INX,
 			       grid_button_list);
+		gtk_tree_path_free(path);
 	}
 
 	if (view == ERROR_VIEW && display_widget) {
@@ -3939,7 +4128,7 @@ extern void specific_info_job(popup_info_t *popup_win)
 	    == SLURM_NO_CHANGE_IN_DATA) {
 		if ((!spec_info->display_widget
 		     || spec_info->view == ERROR_VIEW)
-		    || (job_error_code != SLURM_NO_CHANGE_IN_DATA))
+		    || (step_error_code != SLURM_NO_CHANGE_IN_DATA))
 			goto display_it;
 	} else if (step_error_code != SLURM_SUCCESS) {
 		if (spec_info->view == ERROR_VIEW)
@@ -4036,10 +4225,9 @@ display_it:
 			case SEARCH_JOB_USER:
 				if (!search_info->gchar_data)
 					continue;
-				uname = uid_to_string(job_ptr->user_id);
+				uname = uid_to_string_cached(job_ptr->user_id);
 				name_diff = strcmp(uname,
 						   search_info->gchar_data);
-				xfree(uname);
 				if (name_diff)
 					continue;
 				break;
@@ -4121,7 +4309,7 @@ display_it:
 	_update_info_job(send_info_list,
 			 GTK_TREE_VIEW(spec_info->display_widget));
 
-	list_destroy(send_info_list);
+	FREE_NULL_LIST(send_info_list);
 end_it:
 	popup_win->toggled = 0;
 	popup_win->force_refresh = 0;
@@ -4179,7 +4367,7 @@ extern void popup_all_job(GtkTreeModel *model, GtkTreeIter *iter, int id)
 	GError *error = NULL;
 	int i=0;
 	char *type;
-	char *tmp_jobid, *offset;
+	char *tmp_jobid = NULL, *offset;
 
 	if (cluster_flags & CLUSTER_FLAG_BG)
 		type = "Midplane";
@@ -4188,12 +4376,17 @@ extern void popup_all_job(GtkTreeModel *model, GtkTreeIter *iter, int id)
 
 	gtk_tree_model_get(model, iter, SORTID_JOBID, &tmp_jobid, -1);
 	offset = strchr(tmp_jobid, '(');
+
+	if (!tmp_jobid)
+		return;
+
 	if (offset)
 		offset++;
 	else
 		offset = tmp_jobid;
 	jobid = atoi(offset);
 	g_free(tmp_jobid);
+	gtk_tree_model_get(model, iter, SORTID_JOBID_FORMATTED, &tmp_jobid, -1);
 
 	gtk_tree_model_get(model, iter, SORTID_ALLOC, &stepid, -1);
 
@@ -4207,43 +4400,48 @@ extern void popup_all_job(GtkTreeModel *model, GtkTreeIter *iter, int id)
 	switch(id) {
 	case PART_PAGE:
 		if (stepid == NO_VAL)
-			snprintf(title, 100, "Partition with job %d", jobid);
+			snprintf(title, 100, "Partition with job %s",
+				 tmp_jobid);
 		else
-			snprintf(title, 100, "Partition with job step %d.%d",
-				 jobid, stepid);
+			snprintf(title, 100, "Partition with job step %s",
+				 tmp_jobid);
 		break;
 	case RESV_PAGE:
 		if (stepid == NO_VAL)
-			snprintf(title, 100, "Reservation with job %d", jobid);
+			snprintf(title, 100, "Reservation with job %s",
+				 tmp_jobid);
 		else
-			snprintf(title, 100, "Reservation with job step %d.%d",
-				 jobid, stepid);
+			snprintf(title, 100, "Reservation with job step %s",
+				 tmp_jobid);
 		break;
 	case NODE_PAGE:
 		if (stepid == NO_VAL)
 			snprintf(title, 100,
-				 "%s(s) running job %d", type, jobid);
+				 "%s(s) running job %s", type, tmp_jobid);
 		else
-			snprintf(title, 100, "%s(s) running job step %d.%d",
-				 type, jobid, stepid);
+			snprintf(title, 100, "%s(s) running job step %s",
+				 type, tmp_jobid);
 		break;
 	case BLOCK_PAGE:
 		if (stepid == NO_VAL)
-			snprintf(title, 100, "Block with job %d", jobid);
+			snprintf(title, 100, "Block with job %s", tmp_jobid);
 		else
-			snprintf(title, 100, "Block with job step %d.%d",
-				 jobid, stepid);
+			snprintf(title, 100, "Block with job step %s",
+				 tmp_jobid);
 		break;
 	case INFO_PAGE:
 		if (stepid == NO_VAL)
-			snprintf(title, 100, "Full info for job %d", jobid);
+			snprintf(title, 100, "Full info for job %s", tmp_jobid);
 		else
-			snprintf(title, 100, "Full info for job step %d.%d",
-				 jobid, stepid);
+			snprintf(title, 100, "Full info for job step %s",
+				 tmp_jobid);
 		break;
 	default:
 		g_print("jobs got id %d\n", id);
 	}
+
+	if (tmp_jobid)
+		g_free(tmp_jobid);
 
 	itr = list_iterator_create(popup_list);
 	while ((popup_win = list_next(itr))) {
@@ -4465,6 +4663,10 @@ static void selected_foreach_build_list(GtkTreeModel  *model,
 	char *tmp_jobid, *offset, *end_ptr;
 
 	gtk_tree_model_get(model, iter, SORTID_JOBID, &tmp_jobid, -1);
+
+	if (!tmp_jobid)
+		return;
+
 	offset = strchr(tmp_jobid, '(');
 	if (offset) {
 		array_job_id  = strtol(tmp_jobid, &end_ptr, 10);
@@ -4601,7 +4803,7 @@ static void _edit_jobs(GtkTreeModel *model, GtkTreeIter *iter,
 {
 	jobs_foreach_common_t job_foreach_common;
 	global_error_code = SLURM_SUCCESS;
-	/* setup params that applies to ALL selections */
+	/* setup working_sview_config that applies to ALL selections */
 	memset(&job_foreach_common, 0, sizeof(jobs_foreach_common_t));
 	job_foreach_common.type = type;
 	job_foreach_common.edit_type = EDIT_EDIT;
@@ -4617,7 +4819,7 @@ static void _edit_jobs(GtkTreeModel *model, GtkTreeIter *iter,
 		selected_foreach_build_list(model, NULL, iter, NULL);
 	/* determine what to do with them/it */
 	_edit_each_job(model, iter, &job_foreach_common); /*go do them*/
-	list_destroy(foreach_list);
+	FREE_NULL_LIST(foreach_list);
 
 	return;
 
@@ -4649,6 +4851,10 @@ extern void admin_job(GtkTreeModel *model, GtkTreeIter *iter,
 	gtk_window_set_transient_for(GTK_WINDOW(popup), NULL);
 
 	gtk_tree_model_get(model, iter, SORTID_JOBID, &tmp_jobid, -1);
+
+	if (!tmp_jobid)
+		return;
+
 	offset = strchr(tmp_jobid, '(');
 	if (offset)
 		offset++;
@@ -4734,7 +4940,7 @@ extern void admin_job(GtkTreeModel *model, GtkTreeIter *iter,
 	if (response == GTK_RESPONSE_OK) {
 		jobs_foreach_common_t job_foreach_common;
 		global_error_code = SLURM_SUCCESS;
-		/* setup params that applies to ALL selections */
+		/* setup working_sview_config that applies to ALL selections */
 		memset(&job_foreach_common, 0, sizeof(jobs_foreach_common_t));
 		job_foreach_common.type = type;
 		job_foreach_common.edit_type = edit_type;
@@ -4754,7 +4960,7 @@ extern void admin_job(GtkTreeModel *model, GtkTreeIter *iter,
 			selected_foreach_build_list(model, NULL, iter, NULL);
 		/* determine what to do with them/it */
 		process_foreach_list(&job_foreach_common); /*go do them*/
-		list_destroy(foreach_list);
+		FREE_NULL_LIST(foreach_list);
 	}/*response OK ^^*/
 	/* switch back to standard cursor*/
 

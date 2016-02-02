@@ -15,6 +15,7 @@ EXTRA_DIST = \
 	README				\
 	regression			\
 	regression.py			\
+	slurm_status			\
 	test1.1				\
 	test1.2				\
 	test1.3				\
@@ -95,12 +96,13 @@ EXTRA_DIST = \
 	test1.72			\
 	test1.73			\
 	test1.74			\
+	test1.75			\
+	test1.77			\
 	test1.80			\
 	test1.81			\
 	test1.82			\
 	test1.83			\
 	test1.84			\
-	test1.84.bash			\
 	test1.85			\
 	test1.86			\
 	test1.87			\
@@ -121,6 +123,21 @@ EXTRA_DIST = \
 	test1.95.prog.upc		\
 	test1.96			\
 	test1.96.prog.c			\
+	test1.97			\
+	test1.99			\
+	test1.100			\
+	test1.101			\
+	test1.102			\
+	test1.103			\
+	test1.104			\
+	test1.105			\
+	test1.106			\
+	test1.107			\
+	test1.108			\
+	test1.109			\
+	test1.110			\
+	test1.111			\
+	test1.112			\
 	test2.1				\
 	test2.2				\
 	test2.3				\
@@ -144,6 +161,8 @@ EXTRA_DIST = \
 	test2.21			\
 	test2.22			\
 	test2.23			\
+	test2.24			\
+	test2.25			\
 	test3.1				\
 	test3.2				\
 	test3.3				\
@@ -156,15 +175,19 @@ EXTRA_DIST = \
 	test3.9				\
 	test3.10			\
 	test3.11			\
-	inc3.11.1                      \
-	inc3.11.2                      \
-	inc3.11.3                      \
-	inc3.11.4                      \
-	inc3.11.5                      \
-	inc3.11.6                      \
-	inc3.11.7                      \
-	inc3.11.8                      \
+	inc3.11.1			\
+	inc3.11.2			\
+	inc3.11.3			\
+	inc3.11.4			\
+	inc3.11.5			\
+	inc3.11.6			\
+	inc3.11.7			\
+	inc3.11.8			\
 	test3.12			\
+	test3.13			\
+	test3.14			\
+	test3.15			\
+	test3.16			\
 	test4.1				\
 	test4.2				\
 	test4.3				\
@@ -177,6 +200,8 @@ EXTRA_DIST = \
 	test4.10			\
 	test4.11			\
 	test4.12			\
+	test4.13			\
+	test4.14			\
 	test5.1				\
 	test5.2				\
 	test5.3				\
@@ -185,6 +210,9 @@ EXTRA_DIST = \
 	test5.6				\
 	test5.7				\
 	test5.8				\
+	test5.9				\
+	test5.10			\
+	test5.11			\
 	test6.1				\
 	test6.2				\
 	test6.3				\
@@ -201,6 +229,7 @@ EXTRA_DIST = \
 	test6.13			\
 	test6.13.prog.c			\
 	test6.14			\
+	test6.15			\
 	test7.1				\
 	test7.2				\
 	test7.2.prog.c			\
@@ -234,6 +263,21 @@ EXTRA_DIST = \
 	test7.15			\
 	test7.15.prog.c			\
 	test7.16			\
+	test7.17			\
+	test7.17.prog.c			\
+	test7.17_configs/test7.17.1/gres.conf	\
+	test7.17_configs/test7.17.1/slurm.conf	\
+	test7.17_configs/test7.17.2/gres.conf	\
+	test7.17_configs/test7.17.2/slurm.conf	\
+	test7.17_configs/test7.17.3/gres.conf	\
+	test7.17_configs/test7.17.3/slurm.conf	\
+	test7.17_configs/test7.17.4/gres.conf	\
+	test7.17_configs/test7.17.4/slurm.conf	\
+	test7.17_configs/test7.17.5/slurm.conf	\
+	test7.17_configs/test7.17.6/gres.conf	\
+	test7.17_configs/test7.17.6/slurm.conf	\
+	test7.17_configs/test7.17.7/gres.conf	\
+	test7.17_configs/test7.17.7/slurm.conf	\
 	test8.1				\
 	test8.2				\
 	test8.3				\
@@ -298,6 +342,8 @@ EXTRA_DIST = \
 	test12.5			\
 	test12.6			\
 	test12.6.prog.c			\
+	test12.7			\
+	test12.8			\
 	test13.1			\
 	test13.2			\
 	test14.1			\
@@ -309,6 +355,7 @@ EXTRA_DIST = \
 	test14.7			\
 	test14.8			\
 	test14.9			\
+	test14.10			\
 	test15.1			\
 	test15.2			\
 	test15.3			\
@@ -335,6 +382,16 @@ EXTRA_DIST = \
 	test15.24			\
 	test15.25			\
 	test15.26			\
+	test15.27			\
+	test15.30			\
+	test15.31			\
+	test15.32			\
+	test15.33			\
+	test15.34			\
+	test15.35			\
+	test15.36			\
+	test15.37			\
+	test15.38			\
 	test16.1			\
 	test16.2			\
 	test16.3			\
@@ -374,6 +431,27 @@ EXTRA_DIST = \
 	test17.32			\
 	test17.33			\
 	test17.34			\
+	test17.35			\
+	test17.36			\
+	test17.37			\
+	test17.38			\
+	test17.39			\
+	test17.40			\
+	test17.41			\
+	test17.42			\
+	test17.43			\
+	test17.51			\
+	test17.52			\
+	test17.53			\
+	test17.54			\
+	test17.55			\
+	test17.56			\
+	test17.57			\
+	test17.58			\
+	test17.59			\
+	test17.60			\
+	test17.61			\
+	test17.62			\
 	test19.1			\
 	test19.2			\
 	test19.3			\
@@ -381,6 +459,8 @@ EXTRA_DIST = \
 	test19.5			\
 	test19.6			\
 	test19.7			\
+	test19.8			\
+	test19.9			\
 	test20.1			\
 	test20.2			\
 	test20.3			\
@@ -392,6 +472,7 @@ EXTRA_DIST = \
 	test20.9			\
 	test20.10			\
 	test20.11			\
+	test20.12			\
 	test21.1			\
 	test21.2			\
 	test21.3			\
@@ -413,10 +494,7 @@ EXTRA_DIST = \
 	test21.19			\
 	test21.20			\
 	test21.21			\
-	inc21.21.1                      \
-	inc21.21.2                      \
-	inc21.21.3                      \
-	inc21.21.4                      \
+	inc21.21_tests                  \
 	test21.22			\
 	test21.23			\
 	test21.24			\
@@ -426,6 +504,11 @@ EXTRA_DIST = \
 	test21.28			\
 	test21.29			\
 	test21.30                       \
+	test21.31			\
+	test21.32			\
+	test21.33			\
+	test21.34			\
+	test21.35			\
 	inc21.30.1                      \
 	inc21.30.2                      \
 	inc21.30.3                      \
@@ -442,6 +525,10 @@ EXTRA_DIST = \
 	inc21.30.14			\
 	inc21.30.15			\
 	inc21.30.16			\
+	inc21.30.17			\
+	inc21.34.1			\
+	inc21.34.2			\
+	inc21.34_test			\
 	test22.1			\
 	inc22.1.1                       \
 	inc22.1.2                       \
@@ -453,6 +540,10 @@ EXTRA_DIST = \
 	test24.1			\
 	test24.1.prog.c			\
 	test24.2			\
+	test24.3			\
+	test24.3.prog.c			\
+	test24.4			\
+	test24.4.prog.c			\
 	test25.1			\
 	test26.1			\
 	test26.2			\
@@ -468,6 +559,9 @@ EXTRA_DIST = \
 	test28.5                        \
 	test28.6                        \
 	test28.7			\
+	test28.8			\
+	test28.9			\
+	test28.10			\
 	test29.1                        \
 	test29.2                        \
 	test29.3                        \
@@ -490,7 +584,20 @@ EXTRA_DIST = \
 	test32.10			\
 	test32.11			\
 	test32.12			\
-	usleep
+	test33.1			\
+	test33.1.prog.c			\
+	etc.33.1.1/testcases		\
+	etc.33.1.1/topology.conf	\
+	etc.33.1.2/testcases		\
+	etc.33.1.2/topology.conf	\
+	etc.33.1.3/testcases		\
+	etc.33.1.3/topology.conf	\
+	etc.33.1.4/testcases		\
+	etc.33.1.4/topology.conf	\
+	test34.1			\
+	test34.2			\
+	test35.1			\
+	test35.2
 
 distclean-local:
 	rm -rf *error *output

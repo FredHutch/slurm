@@ -138,6 +138,31 @@ extern uid_t *get_group_members(char *group_name)
 
 	j = 0;
 	uid_cnt = 0;
+
+	/* Get the members from the getgrnam_r() call.
+	 */
+	for (i = 0; grp_result->gr_mem[i]; i++) {
+
+		if (uid_from_string(grp_result->gr_mem[i],
+				    &my_uid) < 0) {
+			continue;
+		}
+		if (my_uid == 0)
+			continue;
+		if (j + 1 >= uid_cnt) {
+			uid_cnt += 100;
+			xrealloc(group_uids,
+				 (sizeof(uid_t) * uid_cnt));
+		}
+
+		group_uids[j++] = my_uid;
+	}
+
+	/* Note that in environments where user/group enumeration has
+	 * been disabled (typically necessary for large user/group
+	 * databases), the rest of this function essentially does
+	 * nothing.  */
+
 #ifdef HAVE_AIX
 	setgrent_r(&fp);
 	while (1) {
@@ -160,6 +185,9 @@ extern uid_t *get_group_members(char *group_name)
 #else
 	setgrent();
 	while (1) {
+		/* MH-CEA workaround to handle different group entries with
+		 * the same gid
+		 */
 		slurm_seterrno(0);
 		res = getgrent_r(&grp, grp_buffer, buflen, &grp_result);
 		if (res != 0 || grp_result == NULL) {
@@ -241,12 +269,9 @@ extern uid_t *get_group_members(char *group_name)
 /* Delete our group/uid cache */
 extern void clear_group_cache(void)
 {
-	pthread_mutex_lock(&group_cache_mutex);
-	if (group_cache_list) {
-		list_destroy(group_cache_list);
-		group_cache_list = NULL;
-	}
-	pthread_mutex_unlock(&group_cache_mutex);
+	slurm_mutex_lock(&group_cache_mutex);
+	FREE_NULL_LIST(group_cache_list);
+	slurm_mutex_unlock(&group_cache_mutex);
 }
 
 /* Get a record from our group/uid cache.
@@ -258,9 +283,9 @@ static uid_t *_get_group_cache(char *group_name)
 	uid_t *group_uids = NULL;
 	int sz;
 
-	pthread_mutex_lock(&group_cache_mutex);
+	slurm_mutex_lock(&group_cache_mutex);
 	if (!group_cache_list) {
-		pthread_mutex_unlock(&group_cache_mutex);
+		slurm_mutex_unlock(&group_cache_mutex);
 		return NULL;
 	}
 
@@ -274,7 +299,7 @@ static uid_t *_get_group_cache(char *group_name)
 		break;
 	}
 	list_iterator_destroy(iter);
-	pthread_mutex_unlock(&group_cache_mutex);
+	slurm_mutex_unlock(&group_cache_mutex);
 	return group_uids;
 }
 
@@ -295,7 +320,7 @@ static void _put_group_cache(char *group_name, void *group_uids, int uid_cnt)
 	struct group_cache_rec *cache_rec;
 	int sz;
 
-	pthread_mutex_lock(&group_cache_mutex);
+	slurm_mutex_lock(&group_cache_mutex);
 	if (!group_cache_list) {
 		group_cache_list = list_create(_cache_del_func);
 	}
@@ -308,7 +333,7 @@ static void _put_group_cache(char *group_name, void *group_uids, int uid_cnt)
 	if (uid_cnt > 0)
 		memcpy(cache_rec->group_uids, group_uids, sz);
 	list_append(group_cache_list, cache_rec);
-	pthread_mutex_unlock(&group_cache_mutex);
+	slurm_mutex_unlock(&group_cache_mutex);
 }
 
 static void _log_group_members(char *group_name, uid_t *group_uids)

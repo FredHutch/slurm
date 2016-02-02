@@ -5,7 +5,7 @@
  *  Written by Morris Jette <jette@schedmd.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://www.schedmd.com/slurmdocs/>.
+ *  For details, see <http://slurm.schedmd.com>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -172,6 +172,12 @@ static spare_node_resv_t *_xlate_hot_spares(char *spare_str, int *spare_cnt)
 			node_cnt = atoi(sep + 1);
 			sep[0] = '\0';
 			part_ptr = find_part_record(part);
+			if ((*spare_cnt > 0) && (spare_ptr == NULL)) {
+				/* Avoid CLANG error */
+				fatal("%s: spare array is NULL with size=%d",
+				      __func__, *spare_cnt);
+				return spare_ptr;
+			}
 			for (i = 0; i < *spare_cnt; i++) {
 				if (spare_ptr[i].part_ptr != part_ptr)
 					continue;
@@ -359,7 +365,7 @@ extern void create_hot_spare_resv(void)
 						  RESERVE_FLAG_IGN_JOBS;
 			resv_msg.name		= resv_name;
 			resv_msg.node_cnt	= node_cnt;
-			resv_msg.partition	= part_ptr->name;
+			resv_msg.partition	= xstrdup(part_ptr->name);
 			resv_msg.start_time	= now;
 			resv_msg.users		= xstrdup("root");
 			if (find_resv_name(resv_name)) {
@@ -371,6 +377,7 @@ extern void create_hot_spare_resv(void)
 				     resv_name);
 				(void) create_resv(&resv_msg);
 			}
+			xfree(resv_msg.partition);
 			xfree(resv_msg.users);
 			break;
 		}

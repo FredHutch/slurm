@@ -81,6 +81,10 @@
 
 #include <sys/utsname.h>
 
+#ifdef HAVE_SYS_STATVFS_H
+#  include <sys/statvfs.h>
+#endif
+
 #ifdef HAVE_SYS_STATFS_H
 #  include <sys/statfs.h>
 #else
@@ -101,6 +105,7 @@
 #include "src/common/read_config.h"
 #include "src/slurmctld/slurmctld.h"
 #include "src/slurmd/slurmd/get_mach_stat.h"
+#include "src/slurmd/slurmd/slurmd.h"
 
 /* #define DEBUG_DETAIL	1 */	/* enable detailed debugging within SLURM */
 
@@ -212,7 +217,29 @@ extern int
 get_tmp_disk(uint32_t *tmp_disk, char *tmp_fs)
 {
 	int error_code = 0;
-#ifdef HAVE_SYS_VFS_H
+
+#if defined(HAVE_STATVFS)
+	struct statvfs stat_buf;
+	uint64_t total_size = 0;
+	char *tmp_fs_name = tmp_fs;
+
+	*tmp_disk = 0;
+	total_size = 0;
+
+	if (tmp_fs_name == NULL)
+		tmp_fs_name = "/tmp";
+	if (statvfs(tmp_fs_name, &stat_buf) == 0) {
+		total_size = stat_buf.f_blocks * stat_buf.f_frsize;
+		total_size /= 1024 * 1024;
+	}
+	else if (errno != ENOENT) {
+		error_code = errno;
+		error ("get_tmp_disk: error %d executing statvfs on %s",
+			errno, tmp_fs_name);
+	}
+	*tmp_disk += (uint32_t)total_size;
+
+#elif defined(HAVE_STATFS)
 	struct statfs stat_buf;
 	long   total_size;
 	float page_size;
@@ -283,7 +310,16 @@ extern int get_up_time(uint32_t *up_time)
 		return errno;
 	}
 
-	*up_time = info.uptime;
+
+	if (conf->boot_time) {
+		/* Make node look like it rebooted when slurmd started */
+		static uint32_t orig_uptime = 0;
+		if (orig_uptime == 0)
+			orig_uptime = info.uptime;
+		*up_time = info.uptime - orig_uptime;
+	} else {
+		*up_time = info.uptime;
+	}
 #endif
 	return 0;
 }
@@ -322,6 +358,25 @@ extern int get_cpu_load(uint32_t *cpu_load)
 	}
 
 	*cpu_load = (info.loads[1] / shift_float) * 100.0;
+#endif
+	return 0;
+}
+
+extern int get_free_mem(uint32_t *free_mem)
+{
+#if defined(HAVE_AIX) || defined(__sun) || defined(__APPLE__) || defined(__NetBSD__) || defined(__FreeBSD__) || defined(__CYGWIN__)
+	/* Not sure how to get CPU load on above systems.
+	 * Perhaps some method below works. */
+	*free_mem = 0;
+#else
+	struct sysinfo info;
+
+	if (sysinfo(&info) < 0) {
+		*free_mem = 0;
+		return errno;
+	}
+
+	*free_mem = (((uint64_t )info.freeram)*info.mem_unit)/(1024*1024);
 #endif
 	return 0;
 }

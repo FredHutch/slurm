@@ -295,8 +295,7 @@ try_small_again:
 
 		/* Re-sort the list back to the original order. */
 		list_sort(block_list, (ListCmpF)bg_record_sort_aval_inc);
-		list_destroy(new_blocks);
-		new_blocks = NULL;
+		FREE_NULL_LIST(new_blocks);
 		if (bg_conf->slurm_debug_flags & DEBUG_FLAG_BG_PICK)
 			info("small block not able to be placed inside others");
 	}
@@ -319,7 +318,6 @@ try_small_again:
 	}
 
 	/* try on free midplanes */
-	rc = SLURM_SUCCESS;
 	if (results)
 		list_flush(results);
 	else {
@@ -400,7 +398,6 @@ try_small_again:
 			     bg_record->mp_str, request->size);
 
 		remove_block(bg_record->ba_mp_list, is_small);
-		rc = SLURM_SUCCESS;
 		if (results)
 			list_flush(results);
 		else {
@@ -420,7 +417,7 @@ try_small_again:
 		}
 
 		if (bg_conf->slurm_debug_flags & DEBUG_FLAG_BG_PICK)
-			info("allocate failure for size %d base partitions",
+			info("allocate failure for size %d midplanes",
 			     request->size);
 		rc = SLURM_ERROR;
 	}
@@ -467,10 +464,7 @@ finished:
 
 	xfree(request->save_name);
 
-	if (results) {
-		list_destroy(results);
-		results = NULL;
-	}
+	FREE_NULL_LIST(results);
 
 	errno = rc;
 

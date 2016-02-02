@@ -98,6 +98,7 @@
 enum { JOB_PAGE,
        PART_PAGE,
        RESV_PAGE,
+       BB_PAGE,
        BLOCK_PAGE,
        NODE_PAGE,
        FRONT_END_PAGE,
@@ -208,6 +209,7 @@ typedef struct {
 	bool show_hidden;
 	bool save_page_opts;
 	uint16_t tab_pos;
+	uint32_t convert_flags;
 } sview_config_t;
 
 struct display_data {
@@ -284,7 +286,7 @@ typedef struct {
 	int inx;
 	GtkStateType last_state;
 	char *node_name;
-	int state;
+	uint32_t state;
 	GtkTable *table;
 	int table_x;
 	int table_y;
@@ -338,7 +340,6 @@ extern GMutex *sview_mutex;
 extern int global_row_count;
 extern gint last_event_x;
 extern gint last_event_y;
-extern int sview_max_cpus;
 extern GdkCursor* in_process_cursor;
 extern int cpus_per_node;
 extern int g_node_scaling;
@@ -353,6 +354,7 @@ extern job_info_msg_t *g_job_info_ptr;
 extern node_info_msg_t *g_node_info_ptr;
 extern partition_info_msg_t *g_part_info_ptr;
 extern reserve_info_msg_t *g_resv_info_ptr;
+extern burst_buffer_info_msg_t *g_bb_info_ptr;
 extern slurm_ctl_conf_info_msg_t *g_ctl_info_ptr;
 extern job_step_info_response_msg_t *g_step_info_ptr;
 extern topo_info_response_msg_t *g_topo_info_msg_ptr;
@@ -369,8 +371,8 @@ extern void print_grid(int dir);
 extern void refresh_main(GtkAction *action, gpointer user_data);
 extern void toggle_tab_visiblity(GtkToggleButton *toggle_button,
 				 display_data_t *display_data);
-extern void tab_pressed(GtkWidget *widget, GdkEventButton *event,
-			display_data_t *display_data);
+extern gboolean tab_pressed(GtkWidget *widget, GdkEventButton *event,
+			    display_data_t *display_data);
 extern void close_tab(GtkWidget *widget, GdkEventButton *event,
 		      display_data_t *display_data);
 
@@ -508,8 +510,10 @@ extern void refresh_node(GtkAction *action, gpointer user_data);
 /* don't destroy the list from this function */
 extern List create_node_info_list(node_info_msg_t *node_info_ptr,
 				  bool by_partition);
-extern int update_features_node(GtkDialog *dialog, const char *nodelist,
-				const char *old_features);
+extern int update_active_features_node(GtkDialog *dialog, const char *nodelist,
+				      const char *old_features);
+extern int update_avail_features_node(GtkDialog *dialog, const char *nodelist,
+				      const char *old_features);
 extern int update_state_node(GtkDialog *dialog,
 			     const char *nodelist, const char *type);
 extern GtkListStore *create_model_node(int type);
@@ -628,8 +632,7 @@ extern gboolean delete_popups(void);
 extern void *popup_thr(popup_info_t *popup_win);
 extern void set_for_update(GtkTreeModel *model, int updated);
 extern void remove_old(GtkTreeModel *model, int updated);
-extern GtkWidget *create_pulldown_combo(display_data_t *display_data,
-					int count);
+extern GtkWidget *create_pulldown_combo(display_data_t *display_data);
 extern char *str_tolower(char *upper_str);
 extern char *get_reason(void);
 extern void display_admin_edit(GtkTable *table, void *type_msg, int *row,
@@ -666,5 +669,21 @@ extern int load_defaults(void);
 extern int save_defaults(bool final_save);
 extern GtkListStore *create_model_defaults(int type);
 extern int configure_defaults(void);
+
+//bb_info.c
+extern void refresh_bb(GtkAction *action, gpointer user_data);
+extern GtkListStore *create_model_bb(int type);
+extern void admin_edit_bb(GtkCellRendererText *cell,
+			  const char *path_string,
+			  const char *new_text,
+			  gpointer data);
+extern void get_info_bb(GtkTable *table, display_data_t *display_data);
+extern void specific_info_bb(popup_info_t *popup_win);
+extern void set_menus_bb(void *arg, void *arg2, GtkTreePath *path, int type);
+extern void cluster_change_bb(void);
+extern void popup_all_bb(GtkTreeModel *model, GtkTreeIter *iter, int id);
+extern void select_admin_bb(GtkTreeModel *model, GtkTreeIter *iter,
+			    display_data_t *display_data,
+			    GtkTreeView *treeview);
 
 #endif

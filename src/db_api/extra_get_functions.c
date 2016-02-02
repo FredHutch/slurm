@@ -49,6 +49,16 @@
 #include "src/common/slurm_accounting_storage.h"
 
 /*
+ * reconfigure the slurmdbd
+ * RET: List of config_key_pairs_t *
+ * note List needs to be freed when called
+ */
+extern int slurmdb_reconfig(void *db_conn)
+{
+	return acct_storage_g_reconfig(db_conn, 1);
+}
+
+/*
  * get info from the storage
  * RET: List of config_key_pairs_t *
  * note List needs to be freed when called
@@ -82,12 +92,12 @@ extern List slurmdb_jobs_get(void *db_conn, slurmdb_job_cond_t *job_cond)
 
 /*
  * get info from the storage
- * IN:  slurmdb_association_cond_t *
- * RET: List of slurmdb_association_rec_t *
+ * IN:  slurmdb_assoc_cond_t *
+ * RET: List of slurmdb_assoc_rec_t *
  * note List needs to be freed when called
  */
 extern List slurmdb_problems_get(void *db_conn,
-				 slurmdb_association_cond_t *assoc_cond)
+				 slurmdb_assoc_cond_t *assoc_cond)
 {
 	return acct_storage_g_get_problems(db_conn, getuid(), assoc_cond);
 }

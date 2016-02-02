@@ -1,4 +1,3 @@
-# $Id$
 # This file is to be processed with autoconf to generate a configure script
 
 dnl Prologue
@@ -110,6 +109,11 @@ PKG_PROG_PKG_CONFIG([0.9.0])
 AM_CONDITIONAL(WITH_CXX, test -n "$ac_ct_CXX")
 AM_CONDITIONAL(WITH_GNU_LD, test "$with_gnu_ld" = "yes")
 
+AC_PATH_PROG([SLEEP_CMD], [sleep], [/bin/sleep])
+AC_DEFINE_UNQUOTED([SLEEP_CMD], ["$SLEEP_CMD"], [Define path to sleep command])
+
+AC_PATH_PROG([SUCMD], [su], [/bin/su])
+AC_DEFINE_UNQUOTED([SUCMD], ["$SUCMD"], [Define path to su command])
 
 dnl Checks for libraries
 dnl
@@ -129,7 +133,7 @@ AC_CHECK_HEADERS(mcheck.h values.h socket.h sys/socket.h  \
 		 pty.h utmp.h \
 		 sys/syslog.h linux/sched.h \
 		 kstat.h paths.h limits.h sys/statfs.h sys/ptrace.h \
-		 sys/termios.h float.h
+		 float.h sys/statvfs.h
 		)
 AC_HEADER_SYS_WAIT
 AC_HEADER_TIME
@@ -176,6 +180,9 @@ dnl Checks for types.
 dnl
 X_AC_SLURM_BIGENDIAN
 
+dnl Check for JSON parser
+X_AC_JSON
+
 dnl Checks for compiler characteristics.
 dnl
 AC_PROG_GCC_TRADITIONAL([])
@@ -200,6 +207,11 @@ AC_CHECK_FUNCS( \
    sysctlbyname \
    cfmakeraw \
    setresuid \
+   get_current_dir_name \
+   faccessat \
+   eaccess \
+   statvfs \
+   statfs \
 )
 
 AC_CHECK_DECLS([hstrerror, strsignal, sys_siglist])
@@ -215,10 +227,8 @@ LDFLAGS="$LDFLAGS "
 CFLAGS="$CFLAGS $PTHREAD_CFLAGS"
 LIBS="$PTHREAD_LIBS $LIBS"
 
-X_AC_SUN_CONST
 X_AC_DIMENSIONS
 
-X_AC_CFLAGS
 X_AC_OFED
 
 AX_LIB_HDF5()
@@ -230,8 +240,8 @@ AM_CONDITIONAL(BUILD_HDF5, test "$with_hdf5" = "yes")
 AC_DEFINE([H5_NO_DEPRECATED_SYMBOLS], [1], [Make sure we get the 1.8 HDF5 API])
 
 X_AC_HWLOC
+X_AC_PMIX
 X_AC_FREEIPMI
-X_AC_XCPU
 X_AC_SLURM_SEMAPHORE
 X_AC_RRDTOOL
 
@@ -276,6 +286,10 @@ fi
 
 if test ${gtk_config_minor_version=0} -ge 14 ; then
        AC_DEFINE([GTK2_USE_GET_FOCUS], 1, [Define to 1 if using gtk+-2.14.0 or higher])
+fi
+
+if test "x$ac_glib_test" != "xyes" -o "x$ac_gtk_test" != "xyes"; then
+	AC_MSG_WARN([cannot build sview without gtk library]);
 fi
 
 AM_CONDITIONAL(BUILD_SVIEW, [test "x$ac_glib_test" = "xyes"] && [test "x$ac_gtk_test" = "xyes"])
@@ -324,6 +338,11 @@ X_AC_NRT
 dnl check for SGI job container support
 dnl
 X_AC_SGI_JOB
+
+
+dnl check for netloc library
+dnl
+X_AC_NETLOC
 
 dnl check for lua library
 dnl
@@ -375,15 +394,10 @@ else
 fi
 
 
-AUTHD_LIBS="-lauth -le"
 savedLIBS="$LIBS"
 savedCFLAGS="$CFLAGS"
-LIBS="$SSL_LIBS $AUTHD_LIBS $LIBS"
+LIBS="$SSL_LIBS $LIBS"
 CFLAGS="$SSL_CPPFLAGS $CFLAGS"
-AC_CHECK_LIB(auth, auth_init_credentials, [have_authd=yes], [have_authd=no])
-AC_SUBST(AUTHD_LIBS)
-AC_SUBST(AUTHD_CFLAGS)
-AM_CONDITIONAL(WITH_AUTHD, test "x$have_authd" = "xyes")
 LIBS="$savedLIBS"
 CFLAGS="$savedCFLAGS"
 
@@ -399,6 +413,11 @@ dnl
 X_AC_BLCR
 
 dnl
+dnl Check for compilation of SLURM with CURL support:
+dnl
+LIBCURL_CHECK_CONFIG
+
+dnl
 dnl Set some configuration based upon multiple configuration parameters
 dnl
 ac_build_smap="no"
@@ -410,22 +429,26 @@ AM_CONDITIONAL(BUILD_SMAP, test "x$ac_build_smap" = "xyes")
 dnl All slurm Makefiles:
 
 AC_CONFIG_FILES([Makefile
-		 config.xml
 		 auxdir/Makefile
 		 contribs/Makefile
 		 contribs/cray/Makefile
+		 contribs/cray/csm/Makefile
 		 contribs/lua/Makefile
 		 contribs/mic/Makefile
 		 contribs/pam/Makefile
+		 contribs/pam_slurm_adopt/Makefile
 		 contribs/perlapi/Makefile
 		 contribs/perlapi/libslurm/Makefile
 		 contribs/perlapi/libslurm/perl/Makefile.PL
 		 contribs/perlapi/libslurmdb/Makefile
 		 contribs/perlapi/libslurmdb/perl/Makefile.PL
+		 contribs/seff/Makefile
 		 contribs/torque/Makefile
+		 contribs/openlava/Makefile
 		 contribs/phpext/Makefile
 		 contribs/phpext/slurm_php/config.m4
 		 contribs/sgather/Makefile
+		 contribs/sgi/Makefile
 		 contribs/sjobexit/Makefile
 		 contribs/slurmdb-direct/Makefile
 		 contribs/pmi2/Makefile
@@ -441,10 +464,16 @@ AC_CONFIG_FILES([Makefile
 		 etc/cgroup.release_common.example
 		 etc/init.d.slurm
 		 etc/init.d.slurmdbd
+		 etc/slurmctld.service
+		 etc/slurmd.service
+		 etc/slurmdbd.service
 		 src/Makefile
 		 src/api/Makefile
 		 src/common/Makefile
 		 src/db_api/Makefile
+		 src/layouts/Makefile
+		 src/layouts/power/Makefile
+		 src/layouts/unit/Makefile
 		 src/database/Makefile
 		 src/sacct/Makefile
 		 src/sacctmgr/Makefile
@@ -481,10 +510,30 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/accounting_storage/mysql/Makefile
 		 src/plugins/accounting_storage/none/Makefile
 		 src/plugins/accounting_storage/slurmdbd/Makefile
+		 src/plugins/acct_gather_energy/Makefile
+		 src/plugins/acct_gather_energy/cray/Makefile
+		 src/plugins/acct_gather_energy/rapl/Makefile
+		 src/plugins/acct_gather_energy/ibmaem/Makefile
+		 src/plugins/acct_gather_energy/ipmi/Makefile
+		 src/plugins/acct_gather_energy/none/Makefile
+		 src/plugins/acct_gather_infiniband/Makefile
+		 src/plugins/acct_gather_infiniband/ofed/Makefile
+		 src/plugins/acct_gather_infiniband/none/Makefile
+		 src/plugins/acct_gather_filesystem/Makefile
+		 src/plugins/acct_gather_filesystem/lustre/Makefile
+		 src/plugins/acct_gather_filesystem/none/Makefile
+		 src/plugins/acct_gather_profile/Makefile
+		 src/plugins/acct_gather_profile/hdf5/Makefile
+		 src/plugins/acct_gather_profile/hdf5/sh5util/Makefile
+		 src/plugins/acct_gather_profile/hdf5/sh5util/libsh5util_old/Makefile
+		 src/plugins/acct_gather_profile/none/Makefile
 		 src/plugins/auth/Makefile
-		 src/plugins/auth/authd/Makefile
 		 src/plugins/auth/munge/Makefile
 		 src/plugins/auth/none/Makefile
+		 src/plugins/burst_buffer/Makefile
+		 src/plugins/burst_buffer/common/Makefile
+		 src/plugins/burst_buffer/cray/Makefile
+		 src/plugins/burst_buffer/generic/Makefile
 		 src/plugins/checkpoint/Makefile
 		 src/plugins/checkpoint/aix/Makefile
 		 src/plugins/checkpoint/blcr/Makefile
@@ -512,21 +561,8 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/jobacct_gather/aix/Makefile
 		 src/plugins/jobacct_gather/cgroup/Makefile
 		 src/plugins/jobacct_gather/none/Makefile
-		 src/plugins/acct_gather_energy/Makefile
-		 src/plugins/acct_gather_energy/rapl/Makefile
-		 src/plugins/acct_gather_energy/ipmi/Makefile
-		 src/plugins/acct_gather_energy/none/Makefile
-		 src/plugins/acct_gather_infiniband/Makefile
-		 src/plugins/acct_gather_infiniband/ofed/Makefile
-		 src/plugins/acct_gather_infiniband/none/Makefile
-		 src/plugins/acct_gather_filesystem/Makefile
-		 src/plugins/acct_gather_filesystem/lustre/Makefile
-		 src/plugins/acct_gather_filesystem/none/Makefile
-		 src/plugins/acct_gather_profile/Makefile
-		 src/plugins/acct_gather_profile/hdf5/Makefile
-		 src/plugins/acct_gather_profile/hdf5/sh5util/Makefile
-		 src/plugins/acct_gather_profile/none/Makefile
 		 src/plugins/jobcomp/Makefile
+		 src/plugins/jobcomp/elasticsearch/Makefile
 		 src/plugins/jobcomp/filetxt/Makefile
 		 src/plugins/jobcomp/none/Makefile
 		 src/plugins/jobcomp/script/Makefile
@@ -536,20 +572,30 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/job_container/none/Makefile
 		 src/plugins/job_submit/Makefile
 		 src/plugins/job_submit/all_partitions/Makefile
-		 src/plugins/job_submit/cnode/Makefile
 		 src/plugins/job_submit/cray/Makefile
 		 src/plugins/job_submit/defaults/Makefile
+		 src/plugins/job_submit/knl/Makefile
 		 src/plugins/job_submit/logging/Makefile
 		 src/plugins/job_submit/lua/Makefile
 		 src/plugins/job_submit/partition/Makefile
 		 src/plugins/job_submit/pbs/Makefile
 		 src/plugins/job_submit/require_timelimit/Makefile
 		 src/plugins/job_submit/throttle/Makefile
+		 src/plugins/knl/Makefile
+		 src/plugins/knl/cray/Makefile
 		 src/plugins/launch/Makefile
 		 src/plugins/launch/aprun/Makefile
 		 src/plugins/launch/poe/Makefile
 		 src/plugins/launch/runjob/Makefile
 		 src/plugins/launch/slurm/Makefile
+		 src/plugins/mcs/Makefile
+		 src/plugins/mcs/none/Makefile
+		 src/plugins/mcs/group/Makefile
+		 src/plugins/mcs/user/Makefile
+		 src/plugins/power/Makefile
+		 src/plugins/power/common/Makefile
+		 src/plugins/power/cray/Makefile
+		 src/plugins/power/none/Makefile
 		 src/plugins/preempt/Makefile
 		 src/plugins/preempt/job_prio/Makefile
 		 src/plugins/preempt/none/Makefile
@@ -566,6 +612,9 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/proctrack/linuxproc/Makefile
 		 src/plugins/proctrack/sgi_job/Makefile
 		 src/plugins/proctrack/lua/Makefile
+		 src/plugins/route/Makefile
+		 src/plugins/route/default/Makefile
+		 src/plugins/route/topology/Makefile
 		 src/plugins/sched/Makefile
 		 src/plugins/sched/backfill/Makefile
 		 src/plugins/sched/builtin/Makefile
@@ -588,7 +637,6 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/select/other/Makefile
 		 src/plugins/select/serial/Makefile
 		 src/plugins/slurmctld/Makefile
-		 src/plugins/slurmctld/dynalloc/Makefile
 		 src/plugins/slurmctld/nonstop/Makefile
 		 src/plugins/slurmd/Makefile
 		 src/plugins/switch/Makefile
@@ -607,6 +655,7 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/mpi/none/Makefile
 		 src/plugins/mpi/openmpi/Makefile
 		 src/plugins/mpi/pmi2/Makefile
+		 src/plugins/mpi/pmix/Makefile
 		 src/plugins/task/Makefile
 		 src/plugins/task/affinity/Makefile
 		 src/plugins/task/cgroup/Makefile
@@ -614,6 +663,7 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/task/none/Makefile
 		 src/plugins/topology/Makefile
 		 src/plugins/topology/3d_torus/Makefile
+		 src/plugins/topology/hypercube/Makefile
 		 src/plugins/topology/node_rank/Makefile
 		 src/plugins/topology/none/Makefile
 		 src/plugins/topology/tree/Makefile

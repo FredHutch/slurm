@@ -57,11 +57,17 @@
 #include <assert.h>
 #include <time.h>
 #include <string.h>
+#include "src/common/bitstring.h"
 
 #define BUF_MAGIC 0x42554545
 #define BUF_SIZE (16 * 1024)
 #define MAX_BUF_SIZE ((uint32_t) 0xffff0000)	/* avoid going over 32-bits */
 #define FLOAT_MULT 1000000
+
+/* If we unpack a buffer that contains bad data, we want to avoid a memory
+ * allocation error due to array or buffer sizes that are unreasonably large */
+#define MAX_PACK_ARRAY_LEN	(128 * 1024)
+#define MAX_PACK_MEM_LEN	(1024 * 1024 * 1024)
 
 struct slurm_buf {
 	uint32_t magic;
@@ -90,6 +96,9 @@ int	unpack_time(time_t *valp, Buf buffer);
 void 	packdouble(double val, Buf buffer);
 int	unpackdouble(double *valp, Buf buffer);
 
+void 	packlongdouble(long double val, Buf buffer);
+int	unpacklongdouble(long double *valp, Buf buffer);
+
 void 	pack64(uint64_t val, Buf buffer);
 int	unpack64(uint64_t *valp, Buf buffer);
 
@@ -110,6 +119,13 @@ int	unpack32_array(uint32_t **valp, uint32_t* size_val, Buf buffer);
 
 void	pack64_array(uint64_t *valp, uint32_t size_val, Buf buffer);
 int	unpack64_array(uint64_t **valp, uint32_t* size_val, Buf buffer);
+
+void	packdouble_array(double *valp, uint32_t size_val, Buf buffer);
+int	unpackdouble_array(double **valp, uint32_t* size_val, Buf buffer);
+
+void	packlongdouble_array(long double *valp, uint32_t size_val, Buf buffer);
+int	unpacklongdouble_array(long double **valp, uint32_t* size_val,
+			       Buf buffer);
 
 void	packmem(char *valp, uint32_t size_val, Buf buffer);
 int	unpackmem(char *valp, uint32_t *size_valp, Buf buffer);
@@ -146,6 +162,19 @@ int	unpackmem_array(char *valp, uint32_t size_valp, Buf buffer);
 	assert(sizeof(*valp) == sizeof(double));        \
 	assert(buf->magic == BUF_MAGIC);		\
         if (unpackdouble(valp,buf))			\
+		goto unpack_error;			\
+} while (0)
+
+#define safe_packlongdouble(val,buf) do {		\
+	assert(sizeof(val) == sizeof(long double));   	\
+	assert(buf->magic == BUF_MAGIC);		\
+	packlongdouble(val,buf);			\
+} while (0)
+
+#define safe_unpacklongdouble(valp,buf) do {		\
+	assert(sizeof(*valp) == sizeof(long double));	\
+	assert(buf->magic == BUF_MAGIC);		\
+        if (unpacklongdouble(valp,buf))			\
 		goto unpack_error;			\
 } while (0)
 
@@ -228,6 +257,20 @@ int	unpackmem_array(char *valp, uint32_t size_valp, Buf buffer);
 		goto unpack_error;			\
 } while (0)
 
+#define safe_unpackdouble_array(valp,size_valp,buf) do {	\
+	assert(sizeof(*size_valp) == sizeof(uint32_t)); \
+	assert(buf->magic == BUF_MAGIC);		\
+	if (unpackdouble_array(valp,size_valp,buf))		\
+		goto unpack_error;			\
+} while (0)
+
+#define safe_unpacklongdouble_array(valp,size_valp,buf) do {	\
+	assert(sizeof(*size_valp) == sizeof(uint32_t)); \
+	assert(buf->magic == BUF_MAGIC);		\
+	if (unpacklongdouble_array(valp,size_valp,buf))		\
+		goto unpack_error;			\
+} while (0)
+
 #define safe_packmem(valp,size_val,buf) do {		\
 	assert(sizeof(size_val) == sizeof(uint32_t)); 	\
 	assert(size_val == 0 || valp != NULL);		\
@@ -271,7 +314,7 @@ int	unpackmem_array(char *valp, uint32_t size_valp, Buf buffer);
 		uint32_t _size;				\
 		bit_fmt(_tmp_str,max_len,bitmap);	\
 		_size = strlen(_tmp_str)+1;		\
-		packmem(_tmp_str,_size,buf);	\
+		packmem(_tmp_str,_size,buf);		\
 	} else						\
 		packmem(NULL,(uint32_t)0,buf);		\
 } while (0)
@@ -308,19 +351,21 @@ int	unpackmem_array(char *valp, uint32_t size_valp, Buf buffer);
 	packmem(NULL, 0, buf); \
 } while (0)
 
-#define pack_bit_fmt(bitmap,buf) do {	\
+#define pack_bit_fmt(bitmap,buf) do {			\
 	assert(buf->magic == BUF_MAGIC);		\
 	if (bitmap) {					\
 		char _tmp_str[0xfffe];			\
 		uint32_t _size;				\
 		bit_fmt(_tmp_str,0xfffe,bitmap);	\
 		_size = strlen(_tmp_str)+1;		\
-		packmem(_tmp_str,_size,buf);	\
+		packmem(_tmp_str,_size,buf);		\
 	} else						\
 		packmem(NULL,(uint32_t)0,buf);		\
 } while (0)
 
-#define pack_bit_str(bitmap,buf) do {	\
+/* NOTE: un/pack_bit_str_hex() is much faster than un/pack_bit_str(),
+ * especially for larger and/or sparse bitmaps. */
+#define pack_bit_str(bitmap,buf) do {			\
 	assert(buf->magic == BUF_MAGIC);		\
 	if (bitmap) {					\
 		char _tmp_str[0xfffe];			\
@@ -334,19 +379,49 @@ int	unpackmem_array(char *valp, uint32_t size_valp, Buf buffer);
 		pack32(NO_VAL, buf);                 	\
 } while (0)
 
-#define unpack_bit_str(bitmap,buf) do {	\
-	char *tmp_str = NULL;				\
-	uint32_t _size = NO_VAL;			\
-	assert(*bitmap == NULL);                        \
+#define unpack_bit_str(bitmap,buf) do {					\
+	char *tmp_str = NULL;						\
+	uint32_t _size = NO_VAL;					\
+	assert(*bitmap == NULL);					\
+	assert(buf->magic == BUF_MAGIC);				\
+	safe_unpack32(&_size, buf);					\
+	if (_size != NO_VAL) {						\
+		*bitmap = bit_alloc(_size);				\
+		safe_unpackstr_xmalloc(&tmp_str, &_size, buf);		\
+		bit_unfmt(*bitmap, tmp_str);				\
+		xfree(tmp_str);						\
+	} else								\
+		*bitmap = NULL;						\
+} while (0)
+
+#define pack_bit_str_hex(bitmap,buf) do {		\
 	assert(buf->magic == BUF_MAGIC);		\
-	safe_unpack32(&_size, buf);			\
-	if (_size != NO_VAL) {				\
-		*bitmap = bit_alloc(_size);			       \
-		safe_unpackstr_xmalloc(&tmp_str, &_size, buf);	       \
-		bit_unfmt(*bitmap, tmp_str);			       \
-		xfree(tmp_str);					       \
-	} else							       \
-		*bitmap = NULL;					       \
+	if (bitmap) {					\
+		char *_tmp_str;				\
+		uint32_t _size;				\
+		_tmp_str = bit_fmt_hexmask(bitmap);	\
+		_size = bit_size(bitmap);               \
+		pack32(_size, buf);              	\
+		_size = strlen(_tmp_str)+1;		\
+		packmem(_tmp_str,_size,buf);	        \
+		xfree(_tmp_str);			\
+	} else						\
+		pack32(NO_VAL, buf);                 	\
+} while (0)
+
+#define unpack_bit_str_hex(bitmap,buf) do {				\
+	char *tmp_str = NULL;						\
+	uint32_t _size = NO_VAL;					\
+	assert(*bitmap == NULL);					\
+	assert(buf->magic == BUF_MAGIC);				\
+	safe_unpack32(&_size, buf);					\
+	if (_size != NO_VAL) {						\
+		*bitmap = bit_alloc(_size);				\
+		safe_unpackstr_xmalloc(&tmp_str, &_size, buf);		\
+		bit_unfmt_hexmask(*bitmap, tmp_str);			\
+		xfree(tmp_str);						\
+	} else								\
+		*bitmap = NULL;						\
 } while (0)
 
 #define unpackstr_ptr		                        \

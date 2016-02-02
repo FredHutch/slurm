@@ -7,7 +7,7 @@
  *  Written by Martin Perry <martin.perry@bull.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://www.schedmd.com/slurmdocs/>.
+ *  For details, see <http://slurm.schedmd.com>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -42,8 +42,6 @@
 #   include "config.h"
 #endif
 
-#include "src/common/xcgroup_read_config.h"
-
 /* Initialize slurmd system cpuset cgroup */
 extern int init_system_cpuset_cgroup(void);
 
@@ -59,6 +57,9 @@ extern int set_system_cgroup_cpus(char *phys_core_str);
 
 /* Set memory limit in system memory cgroup */
 extern int set_system_cgroup_mem_limit(uint32_t mem_spec_limit);
+
+/* Disable OOM killer in system memory cgroup */
+extern int disable_system_cgroup_mem_oom();
 
 /* Attach pid to system cpuset cgroup */
 extern int attach_system_cpuset_pid(pid_t pid);

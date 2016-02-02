@@ -46,8 +46,6 @@
 #include "src/common/bitstring.h"
 #include "src/slurmctld/slurmctld.h"
 
-extern time_t last_resv_update;
-
 /* Create a resource reservation */
 extern int create_resv(resv_desc_msg_t *resv_desc_ptr);
 
@@ -114,6 +112,18 @@ extern int load_all_resv_state(int recover);
 extern int validate_job_resv(struct job_record *job_ptr);
 
 /*
+ * Determine how many burst buffer resources the specified job is prevented
+ *	from using due to reservations
+ *
+ * IN job_ptr   - job to test
+ * IN when      - when the job is expected to start
+ * RET burst buffer reservation structure, call
+ *	 slurm_free_burst_buffer_info_msg() to free
+ */
+extern burst_buffer_info_msg_t *job_test_bb_resv(struct job_record *job_ptr,
+						 time_t when);
+
+/*
  * Determine how many licenses of the give type the specified job is
  *	prevented from using due to reservations
  *
@@ -124,6 +134,22 @@ extern int validate_job_resv(struct job_record *job_ptr);
  */
 extern int job_test_lic_resv(struct job_record *job_ptr, char *lic_name,
 			     time_t when);
+
+/*
+ * Determine how many watts the specified job is prevented from using 
+ * due to reservations
+ *
+ * TODO: this code, replicated from job_test_lic_resv seems to not being
+ * protected against consecutives reservations for which reserved watts
+ * (or licenses count) can not be added directly. Thus, if the job
+ * overlaps multiple non-overlapping reservations, it will be prevented
+ * to use more watts (or licenses) than necessary.
+ *
+ * IN job_ptr   - job to test
+ * IN when      - when the job is expected to start
+ * RET amount of watts the job is prevented from using
+ */
+extern uint32_t job_test_watts_resv(struct job_record *job_ptr, time_t when);
 
 /*
  * Determine which nodes a job can use based upon reservations
@@ -144,7 +170,15 @@ extern int job_test_lic_resv(struct job_record *job_ptr, char *lic_name,
  */
 extern int job_test_resv(struct job_record *job_ptr, time_t *when,
 			 bool move_time, bitstr_t **node_bitmap,
-			 bitstr_t **exc_core_bitmap);
+			 bitstr_t **exc_core_bitmap, bool *resv_overlap);
+
+/*
+ * Note that a job is starting execution. If that job is associated with a
+ * reservation having the "Refresh" flag, then remove that job's nodes from
+ * the reservation. Additional nodes will be added to the reservation from
+ * those currently available.
+ */
+extern void job_claim_resv(struct job_record *job_ptr);
 
 /*
  * Determine the time of the first reservation to end after some time.

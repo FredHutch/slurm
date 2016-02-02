@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Test of srun's --kill-on-bad-exit option.
@@ -68,7 +68,7 @@ puts $fd {
 #include <stdlib.h>
 #include <unistd.h>
 
-main()
+int main()
 {
     char *id = getenv("SLURM_PROCID");
     if (atoi(id) == 9) {

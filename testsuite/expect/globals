@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Establish global state information for SLURM test suite
 #
@@ -145,7 +145,7 @@ cset prompt "(%|#|\\\$|]|\[^>]>) *(|\[^ ]* *)$"
 # Specify locations of other executable files used
 # Only the shell names (e.g. bin_bash) must be full pathnames
 #
-cset bin_awk 	"awk"
+cset bin_awk	"awk"
 cset bin_bash   [exec which bash | tail -n 1]
 cset bin_cat	"cat"
 cset bin_cc	"gcc"
@@ -180,9 +180,9 @@ cset bin_sleep  "sleep"
 cset bin_sort   "sort"
 cset bin_touch  "touch"
 cset bin_uname	"uname"
-cset bin_usleep "usleep"
 cset bin_wc	"wc"
 cset bin_printenv "printenv"
+cset bin_uniq   "uniq"
 
 #
 # Let the commands complete without expect timing out waiting for a
@@ -193,7 +193,7 @@ cset bin_printenv "printenv"
 cset max_job_delay 120
 
 #
-# Files must be propogated between nodes within this number of seconds.
+# Files must be propagated between nodes within this number of seconds.
 # The delay may be due to NFS.
 #
 cset max_file_delay 90
@@ -211,19 +211,23 @@ cset max_stress_tasks 4
 #
 # The error message that the "sleep" command prints when we run "sleep aaa".
 #
-cset sleep_error_message "(invalid time interval)|(bad character in argument)"
+cset sleep_error_message "(invalid time interval)|(bad character in argument)|(usage: sleep seconds)"
 
 # Other common variables
 set alpha                "\[a-zA-Z\]+"
 set alpha_cap            "\[A-Z\]+"
+set alpha_comma_slash    "\[a-zA-Z/,\]+"
 set alpha_numeric        "\[a-zA-Z0-9\]+"
+set alpha_numeric_colon  "\[a-zA-Z0-9_,\:\-\]+"
 set alpha_numeric_comma  "\[a-zA-Z0-9_,\-\]+"
 set alpha_numeric_under  "\[a-zA-Z0-9_\-\]+"
 set alpha_under          "\[A-Z_\]+"
+set alpha_under_slash    "\[a-zA-Z/_\]+"
 set digit                "\[0-9\]"
 set end_of_line          "\[\r\n\]"
 set float                "\[0-9\]+\\.?\[0-9\]*"
 set number               "\[0-9\]+"
+set format_time          "\[0-9\]+\\:\[0-9\]+\\:\[0-9\]+"
 set number_with_suffix   "\[0-9\]+\[KM\]*"
 set slash                "/"
 set whitespace		 "\[ \t\n\r\f\v\]+"
@@ -254,7 +258,7 @@ proc cancel_job { job_id } {
 	}
 
 	send_user "cancelling $job_id\n"
-	exec $scancel -Q $job_id
+	set status [catch [exec $scancel -Q $job_id] result]
 	exec $bin_sleep 1
 	return [wait_for_job $job_id "DONE"]
 }
@@ -421,7 +425,7 @@ proc get_my_gid {  } {
 ################################################################
 
 proc kill_salloc {  } {
-	global bin_id bin_pkill bin_sleep bin_usleep number
+	global bin_id bin_pkill bin_sleep number
 
 	spawn $bin_id -u
 	expect {
@@ -457,7 +461,7 @@ proc kill_salloc {  } {
 ################################################################
 
 proc kill_srun {  } {
-	global bin_id bin_pkill bin_sleep bin_usleep number
+	global bin_id bin_pkill bin_sleep number
 
 	spawn $bin_id -u
 	expect {
@@ -516,10 +520,22 @@ proc wait_for_file { file_name } {
 	for {set my_delay 0} {$my_delay <= $max_file_delay} {incr my_delay} {
 		if {[file exists $file_name]} {
 #			Add small delay for I/O buffering
-			exec $bin_sleep 2
+			exec $bin_sleep 1
 			return 0
 		}
 		exec $bin_sleep 1
+#
+#		Expect may fail to load current NFS info.
+#		Use the ls command to load current info.
+#
+		set slash_pos [string last $file_name "/"]
+		if {$slash_pos < 1} {
+			set dir_name "."
+		} else {
+			decr slash_pos
+			set dir_name [string $file_name 0 $slash_pos]
+		}
+		exec /bin/ls $dir_name
 	}
 	send_user "\nFAILURE: Timeout waiting for file $file_name\n"
 	return 1
@@ -540,7 +556,9 @@ proc wait_for_file { file_name } {
 #        desired_state -- The state you want the job to attain before
 #                         returning.  Currently supports:
 #                            DONE any terminated state
+#                            PENDING job is pending
 #                            RUNNING job is running
+#                            SUSPENDED job is suspended
 #
 # NOTE: We sleep for two seconds before replying that a job is
 # done to give time for I/O completion (stdout/stderr files)
@@ -553,11 +571,18 @@ proc wait_for_job { job_id desired_state } {
 	# First verify that desired_state is supported
 	switch $desired_state {
 		"DONE" {}
+		"PENDING" {}
 		"RUNNING" {}
+		"SUSPENDED" {}
 		default {
-			send_user "Unsupported desired state: $desired_state\n"
+			send_user "FAILURE: wait_for_job with invalid state: $desired_state\n"
 			return 1
 		}
+	}
+
+	if {$job_id == 0} {
+		send_user "FAILURE: wait_for_job with invalid job ID: $job_id\n"
+		return 1
 	}
 
 	set sleep_time  1
@@ -573,12 +598,14 @@ proc wait_for_job { job_id desired_state } {
 		switch $state {
 			"NOT_FOUND" -
 			"CANCELLED" -
+			"DEADLINE" -
 			"FAILED" -
 			"TIMEOUT" -
 			"NODE_FAIL" -
+			"PREEMPTED" -
 			"COMPLETED" {
 				if {[string compare $desired_state "DONE"] == 0} {
-					send_user "Job $job_id is DONE\n"
+					send_user "Job $job_id is DONE ($state)\n"
 					sleep 2
 					return 0
 				}
@@ -586,11 +613,31 @@ proc wait_for_job { job_id desired_state } {
 					send_user "Job $job_id is $state, "
 					send_user "but we wanted RUNNING\n"
 				}
+				if {[string compare $desired_state "SUSPENDED"] == 0} {
+					send_user "Job $job_id is $state, "
+					send_user "but we wanted SUSPENDED\n"
+				}
 				return 1
+			}
+			"PENDING" {
+				if {[string compare $desired_state "PENDING"] == 0} {
+					send_user "Job $job_id is PENDING\n"
+					return 0
+				}
+				send_user "Job $job_id is in state $state, "
+				send_user "desire $desired_state\n"
 			}
 			"RUNNING" {
 				if {[string compare $desired_state "RUNNING"] == 0} {
 					send_user "Job $job_id is RUNNING\n"
+					return 0
+				}
+				send_user "Job $job_id is in state $state, "
+				send_user "desire $desired_state\n"
+			}
+			"SUSPENDED" {
+				if {[string compare $desired_state "SUSPENDED"] == 0} {
+					send_user "Job $job_id is SUSPENDED\n"
 					return 0
 				}
 				send_user "Job $job_id is in state $state, "
@@ -750,6 +797,32 @@ proc wait_for_all_jobs { job_name incr_sleep } {
 	return $matches
 }
 
+################################################################
+#
+# Proc: test_fast_schedule
+#
+# Returns value of FastSchedule from slurm.conf
+#
+################################################################
+proc test_fast_schedule { } {
+	global scontrol number
+
+	log_user 0
+	set fast_schedule -1
+	spawn $scontrol show config
+	expect {
+		-re "FastSchedule *= ($number)" {
+			set fast_schedule $expect_out(1,string)
+			exp_continue
+		}
+		eof {
+			wait
+		}
+	}
+
+	log_user 1
+	return $fast_schedule
+}
 
 ################################################################
 #
@@ -800,6 +873,35 @@ proc test_limits_enforced { } {
 	expect {
 		-re "AccountingStorageEnforce *= (\[a-z]+),limits" {
 			set enforced 1
+			exp_continue
+		}
+		eof {
+			wait
+		}
+	}
+
+	log_user 1
+	return $enforced
+}
+
+################################################################
+#
+# Proc: test_enforce_part_limits
+#
+# Purpose: Return value of EnforcePartLimits
+#
+# Returns EnforcePartLimits value (ALL, ANY, or NO)
+#
+################################################################
+proc test_enforce_part_limits { } {
+	global alpha scontrol
+
+	log_user 0
+	set enforced "UNKNOWN"
+	spawn $scontrol show config
+	expect {
+		-re "EnforcePartLimits *= ($alpha)" {
+			set enforced $expect_out(1,string)
 			exp_continue
 		}
 		eof {
@@ -923,9 +1025,162 @@ proc test_topology { } {
 			wait
 		}
 	}
-
 	log_user 1
 	return $have_topology
+}
+
+################################################################
+#
+# Proc: get_task_types
+#
+# Purpose: get the task plugins running with task/ stripped
+#
+# Returns Returns comma separated list of task plugins running without the task/
+#
+################################################################
+proc get_affinity_types { } {
+	global scontrol alpha_comma_slash
+
+	log_user 0
+	set affinity ""
+	spawn $scontrol show config
+	expect {
+		-re "TaskPlugin *= ($alpha_comma_slash)" {
+			set parts [split $expect_out(1,string) ",/"]
+			while 1 {
+				set task_found [lsearch $parts "task"]
+				if { $task_found == -1 } break
+				set parts [lreplace $parts $task_found $task_found]
+			}
+			set affinity [join $parts ","]
+			exp_continue
+		}
+		eof {
+			wait
+		}
+	}
+	log_user 1
+	return $affinity
+}
+
+################################################################
+#
+# Proc: get_bb_emulate
+#
+# Purpose: Determine if Cray burst buffers API is emulated
+#
+# Returns: 1 if true, 0 if false
+#
+################################################################
+proc get_bb_emulate { } {
+	global scontrol
+
+	log_user 0
+	set bb_emulate 0
+	spawn $scontrol show burst
+	expect {
+		-re "EmulateCray" {
+			set bb_emulate 1
+			exp_continue
+		}
+		eof {
+			wait
+		}
+	}
+	log_user 1
+	return $bb_emulate
+}
+
+################################################################
+#
+# Proc: get_bb_persistent
+#
+# Purpose: Determine if persistent burst buffers can be created by users
+#
+# Returns: 1 if true, 0 if false
+#
+################################################################
+proc get_bb_persistent { } {
+	global scontrol
+
+	log_user 0
+	set bb_persistent 0
+	spawn $scontrol show burst
+	expect {
+		-re "EnablePersistent" {
+			set bb_persistent 1
+			exp_continue
+		}
+		eof {
+			wait
+		}
+	}
+	log_user 1
+	return $bb_persistent
+}
+
+################################################################
+#
+# Proc: get_bb_types
+#
+# Purpose: get the burst buffer plugins running with task/ stripped
+#
+# Returns Returns comma separated list of task plugins running without the task/
+#
+################################################################
+proc get_bb_types { } {
+	global scontrol alpha_under_slash
+
+	log_user 0
+	set bb_types ""
+	spawn $scontrol show config
+	expect {
+		-re "BurstBufferType *= ($alpha_under_slash)" {
+			set parts [split $expect_out(1,string) ",/"]
+			while 1 {
+				set task_found [lsearch $parts "burst_buffer"]
+				if { $task_found == -1 } break
+				set parts [lreplace $parts $task_found $task_found]
+			}
+			set bb_types [join $parts ","]
+			exp_continue
+		}
+		eof {
+			wait
+		}
+	}
+
+	log_user 1
+	return $bb_types
+}
+
+################################################################
+#
+# Proc: get_cpu_governors
+#
+# Purpose: get the CpuFreqGovernor configuration parameter
+#
+# Returns Returns comma separated list of available CPU governor's
+#
+################################################################
+proc get_cpu_governors { } {
+	global scontrol alpha_numeric_comma
+
+	log_user 0
+	set governors ""
+	spawn $scontrol show config
+	expect {
+		-re "CpuFreqGovernors *= ($alpha_numeric_comma)" {
+			set governors $expect_out(1,string)
+			exp_continue
+		}
+		eof {
+			wait
+		}
+	}
+
+	log_user 1
+	return $governors
 }
 
 ################################################################
@@ -938,21 +1193,13 @@ proc test_topology { } {
 #
 ################################################################
 proc test_cpu_affinity { } {
-	global scontrol alpha
-
 	log_user 0
+
 	set affinity 0
-	spawn $scontrol show config
-	expect {
-		-re "task/($alpha)" {
-			if {![string compare $expect_out(1,string) "affinity"]} {
-				set affinity 1
-			}
-			exp_continue
-		}
-		eof {
-			wait
-		}
+	set parts [split [get_affinity_types] ","]
+
+	if { [lsearch $parts "affinity"] != -1 } {
+		set affinity 1
 	}
 
 	log_user 1
@@ -973,18 +1220,14 @@ proc test_cpu_affinity_or_cgroup { } {
 	global scontrol alpha
 
 	log_user 0
+
 	set affinity 0
-	spawn $scontrol show config
-	expect {
-		-re "task/($alpha)" {
-			if {![string compare $expect_out(1,string) "affinity"] || ![string compare $expect_out(1,string) "cgroup"]} {
-				set affinity 1
-			}
-			exp_continue
-		}
-		eof {
-			wait
-		}
+	set parts [split [get_affinity_types] ","]
+
+	if { [lsearch $parts "affinity"] != -1 } {
+		set affinity 1
+	} elseif { [lsearch $parts "cgroup"] != -1 } {
+		set affinity 1
 	}
 
 	log_user 1
@@ -1004,16 +1247,12 @@ proc test_mem_affinity { } {
 	global scontrol alpha
 
 	log_user 0
+
 	set affinity 0
-	spawn $scontrol show config
-	expect {
-		-re "task/affinity" {
-			set affinity 1
-			exp_continue
-		}
-		eof {
-			wait
-		}
+	set parts [split [get_affinity_types] ","]
+
+	if { [lsearch $parts "affinity"] != -1 } {
+		set affinity 1
 	}
 
 	log_user 1
@@ -1037,8 +1276,8 @@ proc test_track_wckey { } {
 	set track_wckey 0
 	spawn $scontrol show config
 	expect {
-		-re "TrackWCKey *= ($number)" {
-			set track_wckey $expect_out(1,string)
+		-re "TrackWCKey *= Yes" {
+			set track_wckey 1
 			exp_continue
 		}
 		eof {
@@ -1179,6 +1418,39 @@ proc test_enforce_safe_set { } {
 	return $enforce_limits
 }
 
+
+################################################################
+#
+# Proc: test_enforce_qos_set
+#
+# Purpose: Determine if AccountingStorageEnforce=qos is set in the slurm.conf.
+#
+# Returns 1 if the system is running with safe limits, 0 otherwise
+#
+################################################################
+
+proc test_enforce_qos_set { } {
+	global alpha_numeric_comma scontrol
+
+	log_user 0
+	set enforce_limits 0
+	spawn $scontrol show config
+	expect {
+		-re "AccountingStorageEnforce *= ($alpha_numeric_comma)" {
+			if {[string first "qos" $expect_out(1,string)] != -1 } {
+				set enforce_limits 1
+			}
+			exp_continue
+		}
+		eof {
+			wait
+		}
+	}
+	log_user 1
+
+	return $enforce_limits
+}
+
 ################################################################
 #
 # Proc: test_using_slurmdbd
@@ -1296,11 +1568,11 @@ proc get_default_acct { user } {
 	if { !$user } {
 		spawn $bin_id -un
 		expect {
-	       	       -re "($alpha_numeric_under)" {
-		       	   set user $expect_out(1,string)
+		       -re "($alpha_numeric_under)" {
+			   set user $expect_out(1,string)
 		       }
 		       eof {
-		    	   wait
+			   wait
 		       }
 		}
 	}
@@ -1356,7 +1628,7 @@ proc test_front_end { } {
 #
 # Proc: test_multiple_slurmd
 #
-# Returns 1 if running multple slurmd per node
+# Returns 1 if running multiple slurmd per node
 #
 ################################################################
 
@@ -1641,6 +1913,37 @@ proc test_emulated { } {
 
 ################################################################
 #
+# Proc: test_killonbadexit
+#
+# Purpose: Determine if KillOnBadExit is configured to be 1.
+#
+#
+# Returns 1 if KillOnBadExit is 1.
+#
+################################################################
+
+proc test_killonbadexit { } {
+	global scontrol bin_bash bin_grep
+
+	log_user 0
+	set killonbadexit 0
+	spawn -noecho $bin_bash -c "exec $scontrol show config | $bin_grep KillOnBadExit"
+	expect {
+		-re "KillOnBadExit *= *1" {
+			set killonbadexit 1
+			exp_continue
+		}
+		eof {
+			wait
+		}
+	}
+	log_user 1
+
+	return $killonbadexit
+}
+
+################################################################
+#
 # Proc: get_cycle_count
 #
 # Purpose: For tests with iteration counts (e.g. test9.1, test9.2)
@@ -1698,18 +2001,19 @@ proc test_select_type { } {
 #
 # Purpose: Determine SelectTypeParameters being used
 #
-# Returns value of SelectTypeParameters
+# Returns 1 if "type" (input) is found, 0 otherwise
 #
 ################################################################
 
-proc test_select_type_params { } {
-	global scontrol bin_bash bin_grep alpha_numeric_under
+proc test_select_type_params { type } {
+	global scontrol bin_bash bin_grep alpha_numeric_comma
 
 	log_user 0
+	set ret 0
 	set params ""
 	spawn -noecho $bin_bash -c "exec $scontrol show config | $bin_grep SelectTypeParameters"
 	expect {
-		-re "SelectTypeParameters *= *($alpha_numeric_under)" {
+		-re "SelectTypeParameters *= *($alpha_numeric_comma)" {
 			set params $expect_out(1,string)
 			exp_continue
 		}
@@ -1717,9 +2021,28 @@ proc test_select_type_params { } {
 			wait
 		}
 	}
+
+	# Since string first doesn't have any case
+	# distinction just make it always be upper.
+	set type [string toupper $type]
+	set params [string toupper $params]
+	set params [split $params ,]
+
+	foreach item $params {
+		# i.e. Check for CR_CORE_MEMORY or CR_CORE
+		if {[string first "MEMORY" $item] != -1 &&
+		    [string first $type $item] != -1} {
+			set ret 1
+			break
+		} elseif {![string compare $type $item]} {
+			set ret 1
+			break
+		}
+	}
+
 	log_user 1
 
-	return $params
+	return $ret
 }
 
 ################################################################
@@ -1846,7 +2169,7 @@ proc dec2hex {value} {
 # Proc: uint2hex
 #
 # Purpose: Create a 32 bit hex number from an unsigned decimal
-# number. 
+# number.
 #
 # Returns: 32 bit hex version of input 'value'
 #
@@ -1966,6 +2289,27 @@ proc default_partition {} {
 	}
 
 	return $name
+}
+
+################################################################
+#
+# Proc: default_part_exclusive
+#
+# Purpose: Use scontrol to determine if the default partition
+#          allocates whole nodes to jobs
+#
+# Returns: Name of the current default partition
+#
+################################################################
+
+proc default_part_exclusive {} {
+	set def_part [default_partition]
+	set shared [partition_shared $def_part]
+	if {[string compare $shared "EXCLUSIVE"] == 0} {
+		return 1
+	} else {
+		return 0
+	}
 }
 
 ################################################################
@@ -2119,18 +2463,18 @@ proc is_super_user { } {
 #
 ################################################################
 proc check_acct_associations { } {
-	global sacctmgr number alpha_numeric_under
+	global sacctmgr number alpha_numeric_under exit_code
 
 	set rc 1
 	log_user 0
 	send_user "Testing Associations\n"
-     	#
-     	# Use sacctmgr to check associations
-     	#
-     	set s_pid [spawn $sacctmgr -n -p list assoc wopi wopl withd format=lft,rgt,cluster]
-     	expect {
+	#
+	# Use sacctmgr to check associations
+	#
+	set s_pid [spawn $sacctmgr -n -p list assoc wopi wopl withd format=lft,rgt,cluster]
+	expect {
 	       -re "($number)\\|($number)\\|($alpha_numeric_under)\\|" {
-	       	      # Here we are checking if we have duplicates and
+		      # Here we are checking if we have duplicates and
 		      # setting up an array to check for holes later
 
 		      set cluster $expect_out(3,string)
@@ -2139,11 +2483,11 @@ proc check_acct_associations { } {
 			      set c_max($cluster) -1
 		      }
 
-	    	      set num1 $expect_out(1,string)
+		      set num1 $expect_out(1,string)
 		      set num2 $expect_out(2,string)
 		      set first [info exists found($cluster,$num1)]
 		      set sec [info exists found($cluster,$num2)]
-		      #send_user "$first=$num1 $sec=$num2\n";
+		      #send_user "$first=$num1 $sec=$num2\n"
 		      if { $first } {
 			     send_user "FAILURE: $cluster found lft $num1 again\n"
 			     set rc 0
@@ -2155,15 +2499,15 @@ proc check_acct_associations { } {
 			     set found($cluster,$num2) 1
 			     if { $c_min($cluster) == -1
 				  || $c_min($cluster) > $num1 } {
-			     	    set c_min($cluster) $num1
+				    set c_min($cluster) $num1
 			     }
 			     if { $c_max($cluster) == -1
 				  || $c_max($cluster) < $num2 } {
-			     	    set c_max($cluster) $num2
+				    set c_max($cluster) $num2
 			     }
 		      }
 		      exp_continue
- 	       }
+	       }
 	       timeout {
 		      send_user "FAILURE: sacctmgr add not responding\n"
 		      slow_kill $s_pid
@@ -2223,8 +2567,40 @@ proc get_job_acct_freq { } {
 
 	log_user 1
 	return $freq_val
+}
 
+################################################################
+#
+# Proc: get_job_acct_type
+#
+# Purpose: gets the value of JobAcctGatherType
+#
+# Returns: JobAcctGatherType value
+#
+################################################################
+proc get_job_acct_type { } {
+	global scontrol alpha
 
+	log_user 0
+	set gather_type "none"
+
+	spawn $scontrol show config
+	expect {
+		-re "JobAcctGatherType *= jobacct_gather/($alpha)" {
+			set gather_type $expect_out(1,string)
+			exp_continue
+		}
+		-re "JobAcctGatherType *= ($alpha)" {
+			set gather_type $expect_out(1,string)
+			exp_continue
+		}
+		eof {
+			wait
+		}
+	}
+
+	log_user 1
+	return $gather_type
 }
 
 ################################################################
@@ -2237,7 +2613,7 @@ proc get_job_acct_freq { } {
 #
 ################################################################
 proc check_accounting_admin_level { } {
-	global sacctmgr alpha alpha_numeric_under bin_id
+	global sacctmgr alpha alpha_numeric_under bin_id exit_code
 
 	set admin_level ""
 	set user_name ""
@@ -2256,19 +2632,19 @@ proc check_accounting_admin_level { } {
 	}
 
 	if { ![string length $user_name] } {
-	   	send_user "FAILURE: No name returned from id\n"
+		send_user "FAILURE: No name returned from id\n"
 		return ""
 	}
 
-     	#
-     	# Use sacctmgr to check admin_level
-     	#
-     	set s_pid [spawn $sacctmgr -n -P list user $user_name format=admin]
-     	expect {
+	#
+	# Use sacctmgr to check admin_level
+	#
+	set s_pid [spawn $sacctmgr -n -P list user $user_name format=admin]
+	expect {
 		-re "($alpha)" {
-	    	      set admin_level $expect_out(1,string)
+		      set admin_level $expect_out(1,string)
 		      exp_continue
- 	       }
+	       }
 	       timeout {
 		      send_user "FAILURE: sacctmgr add not responding\n"
 		      slow_kill $s_pid
@@ -2293,7 +2669,7 @@ proc check_accounting_admin_level { } {
 #
 ################################################################
 proc get_cluster_name { } {
-	global scontrol alpha_numeric_under
+	global scontrol alpha_numeric_under exit_code
 	#
 	# Use scontrol to find the cluster name
 	#
@@ -2330,7 +2706,7 @@ proc get_cluster_name { } {
 ################################################################
 
 proc get_bluegene_layout { } {
-	global scontrol alpha_numeric_under
+	global scontrol alpha_numeric_under exit_code
 
 	log_user 0
 	set layout 0
@@ -2365,7 +2741,7 @@ proc get_bluegene_layout { } {
 ################################################################
 
 proc get_bluegene_psets { } {
-	global scontrol number
+	global scontrol number exit_code
 
 	log_user 0
 	set psets 0
@@ -2396,14 +2772,14 @@ proc get_bluegene_psets { } {
 # Purpose: Determine what kind of bluegene system we are running
 #
 # Returns 'L' for bluegene/L,
-# 	  'P' for bluegene/P,
+#	  'P' for bluegene/P,
 #	  'Q' for bluegene/Q,
-# 	  0 if not set
+#	  0 if not set
 #
 ################################################################
 
 proc get_bluegene_type { } {
-	global scontrol alpha
+	global scontrol alpha exit_code
 
 	log_user 0
 	set type 0
@@ -2438,7 +2814,7 @@ proc get_bluegene_type { } {
 ################################################################
 
 proc get_bluegene_procs_per_cnode { } {
-	global scontrol number
+	global scontrol number exit_code
 
 	log_user 0
 	set cpu_cnt 0
@@ -2473,7 +2849,7 @@ proc get_bluegene_procs_per_cnode { } {
 ################################################################
 
 proc get_bluegene_cnodes_per_mp { } {
-	global scontrol number
+	global scontrol number exit_code
 
 	log_user 0
 	set node_cnt 1
@@ -2508,7 +2884,7 @@ proc get_bluegene_cnodes_per_mp { } {
 ################################################################
 
 proc get_bluegene_allow_sub_blocks { } {
-	global scontrol alpha
+	global scontrol alpha exit_code
 
 	log_user 0
 	set type 0
@@ -2543,7 +2919,7 @@ proc get_bluegene_allow_sub_blocks { } {
 ################################################################
 
 proc get_node_cnt { } {
-	global scontrol
+	global scontrol exit_code
 
 	log_user 0
 	set node_cnt 0
@@ -2580,7 +2956,7 @@ proc get_node_cnt { } {
 proc get_node_cnt_in_part { partition } {
 	global scontrol number
 
-#	log_user 0
+	log_user 0
 	set node_cnt 0
 	set scon_pid [spawn -noecho $scontrol show partition $partition]
 	expect {
@@ -2597,11 +2973,75 @@ proc get_node_cnt_in_part { partition } {
 		eof {
 		}
 	}
-#	log_user 1
+	log_user 1
 
 	return $node_cnt
 }
 
+################################################################
+#
+# Proc: get_idle_node_in_part
+#
+# Purpose: Get an idle node in a given partition
+#
+# Returns name of node in a partition or "" if unknown
+#
+################################################################
+
+proc get_idle_node_in_part { partition } {
+	global scontrol sinfo alpha_numeric_nodelist alpha_numeric_under
+
+	log_user 0
+	set host_list ""
+	spawn $sinfo -oNAME=%N -h -p$partition --state=idle
+	expect {
+		-re "not found" {
+			send_user "\nFAILURE: partition $partition doesn't exist\n"
+		}
+		-re "NAME=($alpha_numeric_nodelist)" {
+			set host_list $expect_out(1,string)
+		}
+		timeout {
+			send_user "\nFAILURE: sinfo not responding\n"
+		}
+		eof {
+			wait
+		}
+	}
+
+	set node_name ""
+	spawn $scontrol show hostname $host_list
+	expect {
+		-re "($alpha_numeric_under)" {
+			set node_name $expect_out(1,string)
+		}
+		timeout {
+			send_user "\nFAILURE: scontrol not responding\n"
+		}
+		eof {
+			wait
+		}
+	}
+	log_user 1
+
+	return $node_name
+}
+
+################################################################
+#
+# Proc: print_failure
+#
+# Purpose:  Print failure with test ID
+#
+# Input: test_id   -- The SLURM regression test ID.
+#
+################################################################
+
+proc print_failure { test_id } {
+
+	send_user "\n"
+	send_user "FAILURE: test$test_id\n"
+}
 
 ################################################################
 #
@@ -2633,12 +3073,12 @@ proc print_success { test_id } {
 proc change_subbp_state { node ionodes state } {
 	global scontrol smap
 
-	set exit_code 0
+	set return_code 0
 
 	set my_pid [spawn $scontrol update subbpname=$node\[$ionodes\] state=$state]
 	expect {
 		-re "slurm_update error:" {
-			set exit_code 1
+			set return_code 1
 			exp_continue
 		}
 		-re "Unable to contact" {
@@ -2648,15 +3088,15 @@ proc change_subbp_state { node ionodes state } {
 		timeout {
 			send_user "\nFAILURE: scontrol not responding\n"
 			slow_kill $my_pid
-			set exit_code 1
+			set return_code 1
 		}
 		eof {
 			wait
 		}
 	}
 
-	if { $exit_code } {
-		return $exit_code
+	if { $return_code } {
+		return $return_code
 	}
 
 	set match 0
@@ -2677,7 +3117,7 @@ proc change_subbp_state { node ionodes state } {
 		timeout {
 			send_user "\nFAILURE: smap not responding\n"
 			slow_kill $my_pid
-			set exit_code 1
+			set return_code 1
 		}
 		eof {
 			wait
@@ -2686,10 +3126,10 @@ proc change_subbp_state { node ionodes state } {
 
 	if {$match != 2} {
 		send_user "\nFAILURE: Subbp did not go into $state state. $match\n"
-		set exit_code 1
+		set return_code 1
 	}
 
-	return $exit_code
+	return $return_code
 }
 
 ################################################################
@@ -2846,7 +3286,7 @@ proc check_node_mem { } {
 #
 ################################################################
 proc get_fs_damping_factor { } {
-	global scontrol number
+	global scontrol number exit_code
 
 	log_user 0
 	set damp 1
@@ -2875,14 +3315,14 @@ proc get_fs_damping_factor { } {
 # Proc: slurmctld_plug_stack_nonstop
 #
 # Purpose: Use scontrol to determine that the
-# 	   SlurmctldPlugstack is set to nonstop.
+#	   SlurmctldPlugstack is set to nonstop.
 #
 # Returns: 1 if the value is set to nonstop.
 #
 ################################################################
 
 proc slurmctld_plug_stack_nonstop { } {
-	global scontrol alpha_numeric_comma
+	global scontrol alpha_numeric_comma exit_code
 
 	log_user 0
 	set nonstop_enforce 0
@@ -2905,4 +3345,284 @@ proc slurmctld_plug_stack_nonstop { } {
 	}
 	log_user 1
 	return $nonstop_enforce
+}
+
+################################################################
+#
+# Proc: job_submit_all_partitions
+#
+# Purpose: Use scontrol to determine if the JobSubmitPlugins
+#          includes "all_partitions".
+#
+# Returns: 1 if the value is set to nonstop.
+#
+################################################################
+
+proc job_submit_all_partitions { } {
+	global scontrol alpha_numeric_comma exit_code
+
+	log_user 0
+	set all_partitions 0
+	set scon_pid [spawn -noecho $scontrol show config]
+	expect {
+		-re "JobSubmitPlugins *= ($alpha_numeric_comma)" {
+			if {[string first $expect_out(1,string) "all_partitions"] != -1} {
+				set all_partitions 1
+			}
+			exp_continue
+		}
+		timeout {
+			send_user "\nFAILURE: scontrol not responding\n"
+			slow_kill $scon_pid
+			set exit_code 1
+		}
+		eof {
+			wait
+		}
+	}
+	log_user 1
+	return $all_partitions
+}
+
+################################################################
+#
+# Proc: wait_for_node
+#
+# Purpose: Wait for a certain number of nodes in a partition to
+#          reach a certain state.
+#
+# Returns: 1 on failure.
+#
+################################################################
+proc wait_for_node {partition state num_nodes} {
+	set wait_time 0
+	set done      0
+	set cnt       0
+	set rt        0
+
+	global sinfo number
+
+	while {$done != 1 && $wait_time < 3} {
+
+		log_user 0
+		spawn $sinfo --noheader --partition $partition --state $state --format %D
+		expect {
+			-re "($number)" {
+				set cnt $expect_out(1,string)
+				exp_continue
+			}
+			timeout {
+				send_user "\nFAILURE: sinfo is not responding\n"
+				set rt 1
+			}
+			eof {
+				wait
+			}
+		}
+		log_user 1
+
+		if {$num_nodes <= $cnt} {
+			set done 1
+		} else {
+			send_user "partition $partition has $cnt nodes idle and we want $num_nodes\n"
+			sleep 3
+			incr wait_time 1
+		}
+	}
+	if {$done != 1} {
+		set rt 1
+	}
+
+	return $rt
+}
+
+#####################################################################
+#
+# Proc: test_preempttype_part
+#
+# Purpose: Determine if preempt mode partition_prio is configured
+#
+# Returns: 0 if none
+#
+#####################################################################
+proc test_preempttype_part { } {
+
+	global scontrol
+	log_user 0
+	set part_prio 0
+	spawn $scontrol show config
+	expect {
+		-re "PreemptType *= preempt/partition_prio" {
+			set part_prio 1
+			exp_continue
+		}
+		eof {
+			wait
+		}
+	}
+	log_user 1
+	return $part_prio
+}
+
+#####################################################################
+#
+# Proc: test_preempttype_qos
+#
+# Purpose: Determine if preempt mode qos is configured
+#
+# Returns: 0 if none
+#
+#####################################################################
+proc test_preempttype_qos { } {
+
+	global scontrol
+	log_user 0
+	set qos 0
+	spawn $scontrol show config
+	expect {
+		-re "PreemptType *= preempt/qos" {
+			set qos 1
+			exp_continue
+		}
+		eof {
+			wait
+		}
+	}
+	log_user 1
+	return $qos
+}
+
+#####################################################################
+#
+# Proc: test_proctrack
+#
+# Purpose: Determine the ProctrackType
+#
+# Returns: the proctrack type
+#
+#####################################################################
+
+proc test_proctrack { } {
+
+	global scontrol alpha_numeric_under
+	log_user 0
+	set proctype ""
+	spawn $scontrol show config
+	expect {
+		-re "ProctrackType *=* proctrack/($alpha_numeric_under)" {
+			set proctype $expect_out(1,string)
+			exp_continue
+		}
+		eof {
+			wait
+		}
+	}
+	log_user 1
+
+	return $proctype
+}
+
+#####################################################################
+#
+# Proc: get_srun_ports
+#
+# Purpose: Determine the SrunPortRange
+#
+# Returns: the SrunPortRange
+#
+#####################################################################
+
+proc get_srun_ports { } {
+
+	global scontrol alpha_numeric_under bin_grep bin_bash number
+	log_user 0
+	set ports 0
+	spawn -noecho $bin_bash -c "exec $scontrol show config | $bin_grep SrunPortRange"
+	expect {
+		-re "SrunPortRange *=* ($alpha_numeric_under)" {
+			set ports $expect_out(1,string)
+			exp_continue
+		}
+		eof {
+			wait
+		}
+	}
+	log_user 1
+
+	return $ports
+}
+
+#####################################################################
+#
+# Proc: available_nodes_hostnames
+#
+# Purpose: Get all idle nodes in the system
+#
+# Returns: idle nodes
+#
+#####################################################################
+
+proc available_nodes_hostnames { partition } {
+
+	global sinfo alpha_numeric_nodelist exit_code
+
+	log_user 0
+	set idle_nodelist ""
+	if {[string compare $partition ""] == 0} {
+		spawn $sinfo -tidle -h -o%N
+	} else {
+		spawn $sinfo -tidle -h -o%N -p$partition
+	}
+	expect {
+		-re "($alpha_numeric_nodelist)" {
+			set idle_nodelist $expect_out(1,string)
+			exp_continue
+		}
+		timeout {
+			send_user "\nFAILURE: sinfo is not responding\n"
+			set exit_code 1
+		}
+		eof {
+			wait
+		}
+	}
+	log_user 1
+	return $idle_nodelist
+}
+
+#####################################################################
+#
+# Proc: test_accting_steps
+#
+# Purpose: Determine if nostep or nojobs is set for
+#          AccoutingStorageEnforce
+#
+# Returns: 1 if set else 0
+#
+#####################################################################
+
+proc test_accting_steps { } {
+
+	global scontrol alpha_numeric_comma
+	log_user 0
+	set enforce_limits 1
+	spawn $scontrol show config
+	expect {
+		-re "AccountingStorageEnforce *= ($alpha_numeric_comma)" {
+			if {[string first "nosteps" $expect_out(1,string)] != -1 } {
+				set enforce_limits 0
+			}
+			if {[string first "nojobs" $expect_out(1,string)] != -1 } {
+				set enforce_limits 0
+			}
+			exp_continue
+		}
+		eof {
+			wait
+		}
+
+	}
+	log_user 1
+
+	return $enforce_limits
 }

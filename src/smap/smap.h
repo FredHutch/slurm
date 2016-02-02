@@ -108,6 +108,7 @@
 #include "src/common/node_select.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurmdb_defs.h"
+#include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
 
@@ -154,7 +155,7 @@ typedef struct {
 	int index;
 	/* letter used in smap */
 	char letter;
-	int state;
+	uint32_t state;
 	/* set if using this midplane in a block */
 	uint16_t used;
 } smap_node_t;

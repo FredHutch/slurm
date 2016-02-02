@@ -1,7 +1,6 @@
 /*****************************************************************************\
  *  reconfigure.c - request that slurmctld shutdown or re-read the
  *	            configuration files
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
@@ -197,7 +196,7 @@ _send_message_controller (enum controller_id dest, slurm_msg_t *req)
  * RET 0 on success, otherwise return -1 and set errno to indicate the error
  */
 extern int
-slurm_set_debugflags (uint32_t debug_flags_plus, uint32_t debug_flags_minus)
+slurm_set_debugflags (uint64_t debug_flags_plus, uint64_t debug_flags_minus)
 {
 	int rc;
 	slurm_msg_t req_msg;

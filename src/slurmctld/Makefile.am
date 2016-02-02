@@ -15,6 +15,8 @@ slurmctld_SOURCES =     \
 	agent.c  	\
 	agent.h		\
 	backup.c	\
+	burst_buffer.c	\
+	burst_buffer.h	\
 	controller.c 	\
 	front_end.c	\
 	front_end.h	\
@@ -37,11 +39,12 @@ slurmctld_SOURCES =     \
 	partition_mgr.c \
 	ping_nodes.c	\
 	ping_nodes.h	\
-	slurmctld_plugstack.c \
-	slurmctld_plugstack.h \
 	port_mgr.c	\
 	port_mgr.h	\
 	power_save.c	\
+	power_save.h	\
+	powercapping.c	\
+	powercapping.h	\
 	preempt.c	\
 	preempt.h	\
 	proc_req.c	\
@@ -53,6 +56,8 @@ slurmctld_SOURCES =     \
 	sched_plugin.c	\
 	sched_plugin.h	\
 	slurmctld.h	\
+	slurmctld_plugstack.c \
+	slurmctld_plugstack.h \
 	srun_comm.c	\
 	srun_comm.h	\
 	state_save.c	\
@@ -68,8 +73,7 @@ sbin_PROGRAMS = slurmctld
 slurmctld_LDADD = 				    \
 	$(top_builddir)/src/common/libdaemonize.la  \
 	$(top_builddir)/src/api/libslurm.o $(DL_LIBS)
-slurmctld_LDFLAGS = -export-dynamic $(CMD_LDFLAGS) \
-	$(HWLOC_LDFLAGS) $(HWLOC_LIBS)
+slurmctld_LDFLAGS = -export-dynamic $(CMD_LDFLAGS)
 
 force:
 $(slurmctld_LDADD) : force

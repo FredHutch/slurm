@@ -17,7 +17,7 @@ AC_DEFUN([X_AC_FREEIPMI],
   AC_ARG_WITH(
     [freeipmi],
     AS_HELP_STRING(--with-freeipmi=PATH,Specify path to freeipmi installation),
-    [_x_ac_freeipmi_dirs="$withval $_x_ac_freeipmi_dirs"])
+    [_x_ac_freeipmi_dirs="$withval"])
 
   AC_CACHE_CHECK(
     [for freeipmi installation],
@@ -51,7 +51,11 @@ AS_VAR_SET(x_ac_cv_freeipmi_dir, $d), [])
     AC_MSG_WARN([unable to locate freeipmi installation])
   else
     FREEIPMI_CPPFLAGS="-I$x_ac_cv_freeipmi_dir/include"
-    FREEIPMI_LDFLAGS="-Wl,-rpath -Wl,$x_ac_cv_freeipmi_dir/$bit -L$x_ac_cv_freeipmi_dir/$bit"
+    if test "$ac_with_rpath" = "yes"; then
+      FREEIPMI_LDFLAGS="-Wl,-rpath -Wl,$x_ac_cv_freeipmi_dir/$bit -L$x_ac_cv_freeipmi_dir/$bit"
+    else
+      FREEIPMI_LDFLAGS="-L$x_ac_cv_freeipmi_dir/$bit"
+    fi
     FREEIPMI_LIBS="-lipmimonitoring"
     AC_DEFINE(HAVE_FREEIPMI, 1, [Define to 1 if freeipmi library found])
   fi

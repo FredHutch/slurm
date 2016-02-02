@@ -60,6 +60,7 @@ enum basil_version {
 	BV_5_0,		/* Basil 1.2 CLE 5.x unconfirmed simulator version  */
 	BV_5_1,		/* Basil 1.3 CLE 5.x unconfirmed simulator version  */
 	BV_5_2,		/* Basil 1.3 CLE 5.2 */
+	BV_5_2_3,	/* Basil 1.3 CLE 5.2.46+ */
 	BV_MAX
 };
 
@@ -358,9 +359,9 @@ struct basil_node {
 extern bool node_is_allocated(const struct basil_node *node);
 
 struct basil_rsvn_app_cmd {
-	uint32_t		width,
-				depth,
-				nppn,
+	uint32_t		width,	/* Processing elements (PEs) */
+				depth,	/* PEs per task */
+				nppn,	/* PEs per node */
 				memory;
 	enum basil_node_arch	arch;
 

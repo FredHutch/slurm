@@ -70,7 +70,6 @@ int global_row_count = 0;
 bool global_multi_error = 0;
 gint last_event_x = 0;
 gint last_event_y = 0;
-int sview_max_cpus = 0;
 GdkCursor* in_process_cursor;
 gchar *global_edit_error_msg = NULL;
 GtkWidget *main_notebook = NULL;
@@ -93,6 +92,7 @@ job_info_msg_t *g_job_info_ptr = NULL;
 node_info_msg_t *g_node_info_ptr = NULL;
 partition_info_msg_t *g_part_info_ptr = NULL;
 reserve_info_msg_t *g_resv_info_ptr = NULL;
+burst_buffer_info_msg_t *g_bb_info_ptr = NULL;
 slurm_ctl_conf_info_msg_t *g_ctl_info_ptr = NULL;
 job_step_info_response_msg_t *g_step_info_ptr = NULL;
 topo_info_response_msg_t *g_topo_info_msg_ptr = NULL;
@@ -127,6 +127,10 @@ display_data_t main_display_data[] = {
 	 refresh_main, create_model_resv, admin_edit_resv,
 	 get_info_resv, specific_info_resv,
 	 set_menus_resv, NULL},
+	{G_TYPE_NONE, BB_PAGE, "Burst Buffers", TRUE, -1,
+	 refresh_main, create_model_bb, admin_edit_bb,
+	 get_info_bb, specific_info_bb,
+	 set_menus_bb, NULL},
 #ifdef HAVE_BG
 	{G_TYPE_NONE, BLOCK_PAGE, "BG Blocks", TRUE, -1,
 	 refresh_main, NULL, NULL,
@@ -321,9 +325,9 @@ static void _page_switched(GtkNotebook     *notebook,
 		/* If we return here we would not clear the grid which
 		   may need to be done. */
 		/* if (toggled || force_refresh) { */
-		/* 	(main_display_data[i].get_info)( */
-		/* 		table, &main_display_data[i]); */
-		/* 	return; */
+		/*	(main_display_data[i].get_info)( */
+		/*		table, &main_display_data[i]); */
+		/*	return; */
 		/* } */
 
 		page_thr = xmalloc(sizeof(page_thr_t));
@@ -383,10 +387,7 @@ static void _set_hidden(GtkToggleAction *action)
 		tmp = g_strdup_printf(
 			"Hidden partitions and their jobs are now visible");
 	if (apply_hidden_change) {
-		if (grid_button_list) {
-			list_destroy(grid_button_list);
-			grid_button_list = NULL;
-		}
+		FREE_NULL_LIST(grid_button_list);
 		get_system_stats(main_grid_table);
 	}
 	apply_hidden_change = TRUE;
@@ -461,6 +462,7 @@ static void _set_ruled(GtkToggleAction *action)
 	cluster_change_part();
 	cluster_change_job();
 	cluster_change_node();
+	cluster_change_bb();
 
 	refresh_main(NULL, NULL);
 	display_edit_note(tmp);
@@ -504,7 +506,7 @@ static void _get_current_debug(GtkRadioAction *action)
 
 static void _get_current_debug_flags(GtkToggleAction *action)
 {
-	static uint32_t debug_flags = 0;
+	static uint64_t debug_flags = 0, tmp_flags;
 	static slurm_ctl_conf_info_msg_t  *slurm_ctl_conf_ptr = NULL;
 	int err_code = get_new_info_config(&slurm_ctl_conf_ptr);
 	GtkAction *debug_action = NULL;
@@ -520,8 +522,13 @@ static void _get_current_debug_flags(GtkToggleAction *action)
 			menu_action_group, debug_actions[i].name);
 		toggle_action = GTK_TOGGLE_ACTION(debug_action);
 		orig_state = gtk_toggle_action_get_active(toggle_action);
-		new_state = debug_flags
-			& debug_str2flags((char *)debug_actions[i].name);
+		if (debug_str2flags((char *)debug_actions[i].name, &tmp_flags)
+		    != SLURM_SUCCESS) {
+			g_error("debug_str2flags no good: %s\n",
+				debug_actions[i].name);
+			continue;
+		}
+		new_state = debug_flags & tmp_flags;
 		if (orig_state != new_state)
 			gtk_toggle_action_set_active(toggle_action, new_state);
 	}
@@ -555,8 +562,8 @@ static void _set_debug(GtkRadioAction *action,
 static void _set_flags(GtkToggleAction *action)
 {
 	char *temp = NULL;
-	uint32_t debug_flags_plus = 0, debug_flags_minus = 0;
-	uint32_t flag = NO_VAL;
+	uint64_t debug_flags_plus = 0, debug_flags_minus = 0;
+	uint64_t flag = (uint64_t)NO_VAL;
 	const char *name;
 
 	if (!action)
@@ -566,7 +573,8 @@ static void _set_flags(GtkToggleAction *action)
 	if (!name)
 		return;
 
-	flag = debug_str2flags((char *)name);
+	if (debug_str2flags((char *)name, &flag) != SLURM_SUCCESS)
+		return;
 
 	if (action && gtk_toggle_action_get_active(action))
 		debug_flags_plus  |= flag;
@@ -627,17 +635,13 @@ static gboolean _delete(GtkWidget *widget,
 	select_g_ba_fini();
 
 #ifdef MEMORY_LEAK_DEBUG
-	if (popup_list)
-		list_destroy(popup_list);
-	if (grid_button_list)
-		list_destroy(grid_button_list);
-	if (multi_button_list)
-		list_destroy(multi_button_list);
-	if (signal_params_list)
-		list_destroy(signal_params_list);
-	if (cluster_list)
-		list_destroy(cluster_list);
+	FREE_NULL_LIST(popup_list);
+	FREE_NULL_LIST(grid_button_list);
+	FREE_NULL_LIST(multi_button_list);
+	FREE_NULL_LIST(signal_params_list);
+	FREE_NULL_LIST(cluster_list);
 	xfree(orig_cluster_name);
+	uid_cache_clear();
 #endif
 	for (i = 0; i<debug_action_entries; i++) {
 		xfree(debug_actions[i].name);
@@ -920,7 +924,7 @@ static GtkWidget *_get_menubar_menu(GtkWidget *window, GtkWidget *notebook)
 		{"debug_debug5", NULL, "debug5(9)", "", "Debug5 level", 9},
 	};
 
-	char *all_debug_flags = debug_flags2str(0xFFFFFFFF);
+	char *all_debug_flags = debug_flags2str(0xFFFFFFFFFFFFFFFF);
 	char *last = NULL;
 	char *tok = strtok_r(all_debug_flags, ",", &last);
 
@@ -989,12 +993,12 @@ static GtkWidget *_get_menubar_menu(GtkWidget *window, GtkWidget *notebook)
 	}
 	xfree(ui_description);
 	/* GList *action_list = */
-	/* 	gtk_action_group_list_actions(menu_action_group); */
+	/*	gtk_action_group_list_actions(menu_action_group); */
 	/* GtkAction *action = NULL; */
 	/* int i=0; */
 	/* while ((action = g_list_nth_data(action_list, i++))) { */
-	/* 	g_print("got %s and %x\n", gtk_action_get_name(action), */
-	/* 		action); */
+	/*	g_print("got %s and %x\n", gtk_action_get_name(action), */
+	/*		action); */
 	/* } */
 
 	/* Get the pointers to the correct action so if we ever need
@@ -1110,8 +1114,8 @@ extern void _change_cluster_main(GtkComboBox *combo, gpointer extra)
 	   going back to the same cluster we were just at.
 	*/
 	/* if (working_cluster_rec) { */
-	/* 	if (!strcmp(cluster_rec->name, working_cluster_rec->name)) */
-	/* 		return; */
+	/*	if (!strcmp(cluster_rec->name, working_cluster_rec->name)) */
+	/*		return; */
 	/* } */
 
 	/* free old info under last cluster */
@@ -1119,6 +1123,8 @@ extern void _change_cluster_main(GtkComboBox *combo, gpointer extra)
 	g_block_info_ptr = NULL;
 	slurm_free_front_end_info_msg(g_front_end_info_ptr);
 	g_front_end_info_ptr = NULL;
+	slurm_free_burst_buffer_info_msg(g_bb_info_ptr);
+	g_bb_info_ptr = NULL;
 	slurm_free_job_info_msg(g_job_info_ptr);
 	g_job_info_ptr = NULL;
 	slurm_free_node_info_msg(g_node_info_ptr);
@@ -1202,11 +1208,11 @@ extern void _change_cluster_main(GtkComboBox *combo, gpointer extra)
 	cluster_change_part();
 	cluster_change_job();
 	cluster_change_node();
+	cluster_change_bb();
 
 	/* destroy old stuff */
 	if (grid_button_list) {
-		list_destroy(grid_button_list);
-		grid_button_list = NULL;
+		FREE_NULL_LIST(grid_button_list);
 		got_grid = 1;
 	}
 
@@ -1286,10 +1292,7 @@ extern void _change_cluster_main(GtkComboBox *combo, gpointer extra)
 			/* I know we just did this before, but it
 			   needs to be done again here.
 			*/
-			if (grid_button_list) {
-				list_destroy(grid_button_list);
-				grid_button_list = NULL;
-			}
+			FREE_NULL_LIST(grid_button_list);
 			get_system_stats(main_grid_table);
 		}
 
@@ -1317,8 +1320,7 @@ static GtkWidget *_create_cluster_combo(void)
 
 	cluster_list = slurmdb_get_info_cluster(NULL);
 	if (!cluster_list || !list_count(cluster_list)) {
-		if (cluster_list)
-			list_destroy(cluster_list);
+		FREE_NULL_LIST(cluster_list);
 		return NULL;
 	}
 
@@ -1415,7 +1417,7 @@ extern void toggle_tab_visiblity(GtkToggleButton *toggle_button,
 	return;
 }
 
-extern void tab_pressed(GtkWidget *widget, GdkEventButton *event,
+extern gboolean tab_pressed(GtkWidget *widget, GdkEventButton *event,
 			display_data_t *display_data)
 {
 	signal_params_t signal_params;
@@ -1425,10 +1427,10 @@ extern void tab_pressed(GtkWidget *widget, GdkEventButton *event,
 	/* single click with the right mouse button? */
 	gtk_notebook_set_current_page(GTK_NOTEBOOK(main_notebook),
 				      display_data->extra);
-	if ((display_data->extra != TAB_PAGE) && (event->button == 3)) {
+	if ((display_data->extra != TAB_PAGE) && (event->button == 3))
 		right_button_pressed(NULL, NULL, event,
 				     &signal_params, TAB_CLICKED);
-	}
+	return true;
 }
 
 extern void close_tab(GtkWidget *widget, GdkEventButton *event,
@@ -1452,6 +1454,8 @@ int main(int argc, char *argv[])
 	int i=0;
 	log_options_t lopts = LOG_OPTS_STDERR_ONLY;
 
+	if (!getenv("SLURM_BITSTR_LEN"))
+		setenv("SLURM_BITSTR_LEN", "128", 1);	/* More array info */
 	slurm_conf_init(NULL);
 	log_init(argv[0], lopts, SYSLOG_FACILITY_USER, NULL);
 	load_defaults();

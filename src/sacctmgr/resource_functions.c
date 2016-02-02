@@ -8,7 +8,7 @@
  *  Written by Bill Brophy <bill.brophy@bull.com>
  *
  *  This file is part of SLURM, a resource management program.
- *  For details, see <http://www.schedmd.com/slurmdocs/>.
+ *  For details, see <http://slurm.schedmd.com>.
  *  Please also read the included file: DISCLAIMER.
  *
  *  SLURM is free software; you can redistribute it and/or modify it under
@@ -45,7 +45,7 @@ static void _print_overcommit(slurmdb_res_rec_t *res,
 	List res_list = NULL, cluster_list = NULL;
 	ListIterator itr, clus_itr = NULL, found_clus_itr = NULL;
 	slurmdb_res_rec_t *found_res;
-	slurmdb_clus_res_rec_t *clus_res;
+	slurmdb_clus_res_rec_t *clus_res = NULL;
 	char *cluster;
 
 	if (res->percent_used == (uint16_t)NO_VAL)
@@ -108,10 +108,14 @@ static void _print_overcommit(slurmdb_res_rec_t *res,
 		} else if (clus_itr) {
 			while ((cluster = list_next(clus_itr))) {
 				total += res->percent_used;
-
-				fprintf(stderr,
-					"   Cluster - %s\t %u%%\n",
-					clus_res->cluster, res->percent_used);
+				if (clus_res) {
+					fprintf(stderr,
+						"   Cluster - %s\t %u%%\n",
+						clus_res->cluster,
+						res->percent_used);
+				} else {
+					error("%s: clus_res is NULL", __func__);
+				}
 			}
 		}
 		if (clus_itr)
@@ -230,8 +234,17 @@ static int _set_res_cond(int *start, int argc, char *argv[],
 				}
 			}
 			list_iterator_destroy(itr);
-		} else if (!strncasecmp(argv[i], "Manager",
-					 MAX(command_len, 2))) {
+		} else if (!strncasecmp(argv[i], "PercentAllowed",
+					 MAX(command_len, 1))) {
+			if (!res_cond->percent_list) {
+				res_cond->percent_list =
+					list_create(slurm_destroy_char);
+			}
+			if (slurm_addto_char_list(res_cond->percent_list,
+						  argv[i]+end))
+				set = 1;
+		} else if (!strncasecmp(argv[i], "ServerType",
+					 MAX(command_len, 7))) {
 			if (!res_cond->manager_list) {
 				res_cond->manager_list =
 					list_create(slurm_destroy_char);
@@ -341,8 +354,16 @@ static int _set_res_rec(int *start, int argc, char *argv[],
 				exit_code = 1;
 			} else
 				set = 1;
-		} else if (!strncasecmp(argv[i], "Manager",
-					 MAX(command_len, 1))) {
+
+		} else if (!strncasecmp(argv[i], "Server",
+					MAX(command_len, 1))) {
+			if (!res->server) {
+				res->server=
+					strip_quotes(argv[i]+end, NULL, 1);
+			}
+			set = 1;
+		} else if (!strncasecmp(argv[i], "ServerType",
+					MAX(command_len, 1))) {
 			if (!res->manager)
 				res->manager =
 					strip_quotes(argv[i]+end, NULL, 1);
@@ -354,13 +375,6 @@ static int _set_res_rec(int *start, int argc, char *argv[],
 				       "PercentAllowed") == SLURM_SUCCESS) {
 				set = 1;
 			}
-		} else if (!strncasecmp(argv[i], "Server",
-					  MAX(command_len, 1))) {
-			if (!res->server) {
-				res->server=
-					strip_quotes(argv[i]+end, NULL, 1);
-			}
-			set = 1;
 		} else if (!strncasecmp(argv[i], "Type",
 					MAX(command_len, 1))) {
 			char *temp = strip_quotes(argv[i]+end, NULL, 1);
@@ -422,14 +436,6 @@ static void _print_res_format(slurmdb_res_rec_t *res,
 			field->print_routine(field, count,
 					     (curr_inx == field_count));
 			break;
-		case PRINT_CUSED:
-			if (clus_res)
-				count = (res->count * res->percent_used) / 100;
-			else
-				count = 0;
-			field->print_routine(field, count,
-					     (curr_inx == field_count));
-			break;
 		case PRINT_COUNT:
 			field->print_routine(field,
 					     res->count,
@@ -453,7 +459,7 @@ static void _print_res_format(slurmdb_res_rec_t *res,
 				(curr_inx == field_count));
 			xfree(tmp_char);
 			break;
-		case PRINT_MANAGER:
+		case PRINT_SERVERTYPE:
 			field->print_routine(field,
 					     res->manager,
 					     (curr_inx == field_count));
@@ -474,7 +480,7 @@ static void _print_res_format(slurmdb_res_rec_t *res,
 						     res->type),
 					     (curr_inx == field_count));
 			break;
-		case PRINT_USED:
+		case PRINT_ALLOCATED:
 			field->print_routine(
 				field, res->percent_used,
 				(curr_inx == field_count));
@@ -541,7 +547,10 @@ extern int sacctmgr_add_res(int argc, char *argv[])
 	if (!g_res_list) {
 		slurmdb_res_cond_t res_cond;
 		slurmdb_init_res_cond(&res_cond, 0);
-		res_cond.with_clusters = 1;
+		/* 2 means return all resources even if they don't
+		   have clusters attached to them.
+		*/
+		res_cond.with_clusters = 2;
 		g_res_list = acct_storage_g_get_res(db_conn, my_uid, &res_cond);
 		if (!g_res_list) {
 			exit_code=1;
@@ -591,6 +600,7 @@ extern int sacctmgr_add_res(int argc, char *argv[])
 			res->count = start_res->count;
 			res->flags = start_res->flags;
 			res->type = start_res->type;
+			res->percent_used = 0;
 
 			xstrfmtcat(res_str, "  %s@%s\n",
 				   res->name, res->server);
@@ -604,12 +614,14 @@ extern int sacctmgr_add_res(int argc, char *argv[])
 			uint16_t start_used = 0;
 
 			if (found_res) {
-				found_itr = list_iterator_create(
-					found_res->clus_res_list);
+				if (found_res->clus_res_list)
+					found_itr = list_iterator_create(
+						found_res->clus_res_list);
 				res = xmalloc(sizeof(slurmdb_res_rec_t));
 				slurmdb_init_res_rec(res, 0);
 				res->id = found_res->id;
 				res->type = found_res->type;
+				res->server = xstrdup(found_res->server);
 				start_used = res->percent_used =
 					found_res->percent_used;
 			}
@@ -619,7 +631,7 @@ extern int sacctmgr_add_res(int argc, char *argv[])
 
 			while ((cluster = list_next(clus_itr))) {
 				clus_res = NULL;
-				if (found_res) {
+				if (found_itr) {
 					while ((clus_res =
 						list_next(found_itr))) {
 						if (!strcmp(clus_res->cluster,
@@ -676,7 +688,7 @@ extern int sacctmgr_add_res(int argc, char *argv[])
 			if (res->percent_used > 100)
 				break;
 
-			if (found_res)
+			if (found_itr)
 				list_iterator_destroy(found_itr);
 
 			if (!added)
@@ -723,7 +735,7 @@ extern int sacctmgr_add_res(int argc, char *argv[])
 		if (res->description)
 			printf("  Description    = %s\n", res->description);
 		if (res->manager)
-			printf("  Manager        = %s\n", res->manager);
+			printf("  ServerType     = %s\n", res->manager);
 		if (res->count != NO_VAL)
 			printf("  Count          = %u\n", res->count);
 		printf("  Type           = %s\n", tmp_str);
@@ -789,7 +801,7 @@ extern int sacctmgr_list_res(int argc, char *argv[])
 	} else if (!list_count(format_list)) {
 		slurm_addto_char_list(
 			format_list,
-			"Name,Server,Type,Count,Used");
+			"Name,Server,Type,Count,Allocated,ServerType");
 		if (res_cond->with_clusters)
 			slurm_addto_char_list(
 				format_list, "Cluster,Allowed");
@@ -888,6 +900,18 @@ extern int sacctmgr_modify_res(int argc, char *argv[])
 			slurmdb_destroy_res_rec(res);
 			return SLURM_SUCCESS;
 		}
+	}
+
+	if (res->count != NO_VAL && res_cond->cluster_list &&
+			list_count(res_cond->cluster_list)) {
+		fprintf(stderr, "Can't change \"count\" on a cluster-based "
+			"resource. Remove cluster selection.\n");
+		return SLURM_ERROR;
+	} else if (res->percent_used != (uint16_t)NO_VAL &&
+			!res_cond->cluster_list) {
+		fprintf(stderr, "Can't change \"percentallowed\" without "
+			"specifying a cluster.\n");
+		return SLURM_ERROR;
 	}
 
 	notice_thread_init();

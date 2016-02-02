@@ -75,15 +75,23 @@
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 #include "src/slurmd/slurmstepd/step_terminate_monitor.h"
 
+#include "src/slurmd/common/task_plugin.h"
+
 static void *_handle_accept(void *arg);
 static int _handle_request(int fd, stepd_step_rec_t *job, uid_t uid, gid_t gid);
 static int _handle_state(int fd, stepd_step_rec_t *job);
 static int _handle_info(int fd, stepd_step_rec_t *job);
+static int _handle_mem_limits(int fd, stepd_step_rec_t *job);
+static int _handle_uid(int fd, stepd_step_rec_t *job);
+static int _handle_nodeid(int fd, stepd_step_rec_t *job);
 static int _handle_signal_task_local(int fd, stepd_step_rec_t *job, uid_t uid);
 static int _handle_signal_container(int fd, stepd_step_rec_t *job, uid_t uid);
 static int _handle_checkpoint_tasks(int fd, stepd_step_rec_t *job, uid_t uid);
 static int _handle_attach(int fd, stepd_step_rec_t *job, uid_t uid);
 static int _handle_pid_in_container(int fd, stepd_step_rec_t *job);
+static void *_wait_extern_pid(void *args);
+static int _handle_add_extern_pid_internal(stepd_step_rec_t *job, pid_t pid);
+static int _handle_add_extern_pid(int fd, stepd_step_rec_t *job);
 static int _handle_daemon_pid(int fd, stepd_step_rec_t *job);
 static int _handle_notify_job(int fd, stepd_step_rec_t *job, uid_t uid);
 static int _handle_suspend(int fd, stepd_step_rec_t *job, uid_t uid);
@@ -110,6 +118,12 @@ struct request_params {
 	int fd;
 	stepd_step_rec_t *job;
 };
+
+typedef struct {
+	stepd_step_rec_t *job;
+	pid_t pid;
+} extern_pid_t;
+
 
 static pthread_mutex_t message_lock = PTHREAD_MUTEX_INITIALIZER;
 static pthread_cond_t message_cond = PTHREAD_COND_INITIALIZER;
@@ -150,7 +164,7 @@ _create_socket(const char *name)
 	if (bind(fd, (struct sockaddr *) &addr, len) < 0)
 		return -2;
 
-	if (listen(fd, 5) < 0)
+	if (listen(fd, 32) < 0)
 		return -3;
 
 	return fd;
@@ -185,15 +199,16 @@ _domain_socket_create(const char *dir, const char *nodename,
 	 */
 	if (stat(name, &stat_buf) == 0) {
 		/* Vestigial from a slurmd crash or job requeue that did not
-		 * happen properly (very rare conditions). Try another name */
-		xstrcat(name, ".ALT");
-		if (stat(name, &stat_buf) == 0) {
-			error("Socket %s already exists", name);
+		 * happen properly (very rare conditions). Unlink the file
+		 * and recreate it.
+		 */
+		if (unlink(name) != 0) {
+			error("%s: failed unlink(%s) job %u step %u %m",
+			      __func__, name, jobid, stepid);
 			xfree(name);
 			errno = ESLURMD_STEP_EXISTS;
 			return -1;
 		}
-		error("Using alternate socket name %s", name);
 	}
 
 	fd = _create_socket(name);
@@ -244,7 +259,7 @@ msg_thr_create(stepd_step_rec_t *job)
 	fd_set_nonblocking(fd);
 
 	eio_obj = eio_obj_create(fd, &msg_socket_ops, (void *)job);
-	job->msg_handle = eio_handle_create();
+	job->msg_handle = eio_handle_create(0);
 	eio_new_initial_obj(job->msg_handle, eio_obj);
 
 	slurm_attr_init(&attr);
@@ -270,17 +285,17 @@ msg_thr_create(stepd_step_rec_t *job)
  * This gives connection threads a chance to complete any pending
  * RPCs before the slurmstepd exits.
  */
-static void _wait_for_connections()
+static void _wait_for_connections(void)
 {
 	struct timespec ts = {0, 0};
 	int rc = 0;
 
-	pthread_mutex_lock(&message_lock);
+	slurm_mutex_lock(&message_lock);
 	ts.tv_sec = time(NULL) + STEPD_MESSAGE_COMP_WAIT;
 	while (message_connections > 0 && rc == 0)
 		rc = pthread_cond_timedwait(&message_cond, &message_lock, &ts);
 
-	pthread_mutex_unlock(&message_lock);
+	slurm_mutex_unlock(&message_lock);
 }
 
 static bool
@@ -322,19 +337,25 @@ _msg_socket_accept(eio_obj_t *obj, List objs)
 			    (socklen_t *)&len)) < 0) {
 		if (errno == EINTR)
 			continue;
-		if (errno == EAGAIN
-		    || errno == ECONNABORTED
-		    || errno == EWOULDBLOCK) {
+		if ((errno == EAGAIN) ||
+		    (errno == ECONNABORTED) ||
+		    (errno == EWOULDBLOCK)) {
 			return SLURM_SUCCESS;
 		}
 		error("Error on msg accept socket: %m");
+		if ((errno == EMFILE)  ||
+		    (errno == ENFILE)  ||
+		    (errno == ENOBUFS) ||
+		    (errno == ENOMEM)) {
+			return SLURM_SUCCESS;
+		}
 		obj->shutdown = true;
 		return SLURM_SUCCESS;
 	}
 
-	pthread_mutex_lock(&message_lock);
+	slurm_mutex_lock(&message_lock);
 	message_connections++;
-	pthread_mutex_unlock(&message_lock);
+	slurm_mutex_unlock(&message_lock);
 
 	fd_set_close_on_exec(fd);
 	fd_set_blocking(fd);
@@ -405,7 +426,7 @@ _handle_accept(void *arg)
 		free_buf(buffer);
 		goto fail;
 	}
-	rc = g_slurm_auth_verify(auth_cred, NULL, 2, NULL);
+	rc = g_slurm_auth_verify(auth_cred, NULL, 2, slurm_get_auth_info());
 	if (rc != SLURM_SUCCESS) {
 		error("Verifying authentication credential: %s",
 		      g_slurm_auth_errstr(g_slurm_auth_errno(auth_cred)));
@@ -415,13 +436,13 @@ _handle_accept(void *arg)
 	}
 
 	/* Get the uid & gid from the credential, then destroy it. */
-	uid = g_slurm_auth_get_uid(auth_cred, NULL);
-	gid = g_slurm_auth_get_gid(auth_cred, NULL);
+	uid = g_slurm_auth_get_uid(auth_cred, slurm_get_auth_info());
+	gid = g_slurm_auth_get_gid(auth_cred, slurm_get_auth_info());
 	debug3("  Identity: uid=%d, gid=%d", uid, gid);
 	g_slurm_auth_destroy(auth_cred);
 	free_buf(buffer);
 
-	rc = SLURM_SUCCESS;
+	rc = SLURM_PROTOCOL_VERSION;
 	safe_write(fd, &rc, sizeof(int));
 
 	while (1) {
@@ -433,10 +454,10 @@ _handle_accept(void *arg)
 	if (close(fd) == -1)
 		error("Closing accepted fd: %m");
 
-	pthread_mutex_lock(&message_lock);
+	slurm_mutex_lock(&message_lock);
 	message_connections--;
 	pthread_cond_signal(&message_cond);
-	pthread_mutex_unlock(&message_lock);
+	slurm_mutex_unlock(&message_lock);
 
 	debug3("Leaving  _handle_accept");
 	return NULL;
@@ -494,6 +515,18 @@ _handle_request(int fd, stepd_step_rec_t *job, uid_t uid, gid_t gid)
 		debug("Handling REQUEST_INFO");
 		rc = _handle_info(fd, job);
 		break;
+	case REQUEST_STEP_MEM_LIMITS:
+		debug("Handling REQUEST_STEP_MEM_LIMITS");
+		rc = _handle_mem_limits(fd, job);
+		break;
+	case REQUEST_STEP_UID:
+		debug("Handling REQUEST_STEP_UID");
+		rc = _handle_uid(fd, job);
+		break;
+	case REQUEST_STEP_NODEID:
+		debug("Handling REQUEST_STEP_NODEID");
+		rc = _handle_nodeid(fd, job);
+		break;
 	case REQUEST_ATTACH:
 		debug("Handling REQUEST_ATTACH");
 		rc = _handle_attach(fd, job, uid);
@@ -542,6 +575,10 @@ _handle_request(int fd, stepd_step_rec_t *job, uid_t uid, gid_t gid)
 		debug("Handling REQUEST_JOB_NOTIFY");
 		rc = _handle_notify_job(fd, job, uid);
 		break;
+	case REQUEST_ADD_EXTERN_PID:
+		debug("Handling REQUEST_ADD_EXTERN_PID");
+		rc = _handle_add_extern_pid(fd, job);
+		break;
 	default:
 		error("Unrecognized request: %d", req);
 		rc = SLURM_FAILURE;
@@ -581,6 +618,37 @@ _handle_info(int fd, stepd_step_rec_t *job)
 	safe_write(fd, &job->nodeid, sizeof(uint32_t));
 	safe_write(fd, &job->job_mem, sizeof(uint32_t));
 	safe_write(fd, &job->step_mem, sizeof(uint32_t));
+
+	return SLURM_SUCCESS;
+rwfail:
+	return SLURM_FAILURE;
+}
+
+static int
+_handle_mem_limits(int fd, stepd_step_rec_t *job)
+{
+	safe_write(fd, &job->job_mem, sizeof(uint32_t));
+	safe_write(fd, &job->step_mem, sizeof(uint32_t));
+
+	return SLURM_SUCCESS;
+rwfail:
+	return SLURM_FAILURE;
+}
+
+static int
+_handle_uid(int fd, stepd_step_rec_t *job)
+{
+	safe_write(fd, &job->uid, sizeof(uid_t));
+
+	return SLURM_SUCCESS;
+rwfail:
+	return SLURM_FAILURE;
+}
+
+static int
+_handle_nodeid(int fd, stepd_step_rec_t *job)
+{
+	safe_write(fd, &job->nodeid, sizeof(uid_t));
 
 	return SLURM_SUCCESS;
 rwfail:
@@ -633,10 +701,10 @@ _handle_signal_task_local(int fd, stepd_step_rec_t *job, uid_t uid)
 	/*
 	 * Signal the task
 	 */
-	pthread_mutex_lock(&suspend_mutex);
+	slurm_mutex_lock(&suspend_mutex);
 	if (suspended) {
 		rc = ESLURMD_STEP_SUSPENDED;
-		pthread_mutex_unlock(&suspend_mutex);
+		slurm_mutex_unlock(&suspend_mutex);
 		goto done;
 	}
 
@@ -650,7 +718,7 @@ _handle_signal_task_local(int fd, stepd_step_rec_t *job, uid_t uid)
 			signal, job->jobid, job->stepid,
 			job->task[ltaskid]->pid);
 	}
-	pthread_mutex_unlock(&suspend_mutex);
+	slurm_mutex_unlock(&suspend_mutex);
 
 done:
 	/* Send the return code */
@@ -671,8 +739,13 @@ _handle_signal_container(int fd, stepd_step_rec_t *job, uid_t uid)
 	int target_node_id = 0;
 	stepd_step_task_info_t *task;
 	uint32_t i;
+	uint32_t flag;
+	uint32_t signal;
 
-	safe_read(fd, &sig, sizeof(int));
+	safe_read(fd, &signal, sizeof(int));
+	flag = signal >> 24;
+	sig = signal & 0xfff;
+
 	debug("_handle_signal_container for step=%u.%u uid=%d signal=%d",
 	      job->jobid, job->stepid, (int) uid, sig);
 	if ((uid != job->uid) && !_slurm_authorized_user(uid)) {
@@ -722,6 +795,7 @@ _handle_signal_container(int fd, stepd_step_rec_t *job, uid_t uid)
 	    (job->state < SLURMSTEPD_STEP_ENDING)) {
 		time_t now = time(NULL);
 		char entity[24], time_str[24];
+
 		if (job->stepid == SLURM_BATCH_SCRIPT) {
 			snprintf(entity, sizeof(entity), "JOB %u", job->jobid);
 		} else {
@@ -733,28 +807,36 @@ _handle_signal_container(int fd, stepd_step_rec_t *job, uid_t uid)
 		/* Not really errors,
 		 * but we want messages displayed by default */
 		if (sig == SIG_TIME_LIMIT) {
-			error("*** %s CANCELLED AT %s DUE TO TIME LIMIT ***",
-			      entity, time_str);
+			error("*** %s ON %s CANCELLED AT %s DUE TO TIME LIMIT ***",
+			      entity, job->node_name, time_str);
 			msg_sent = 1;
 		} else if (sig == SIG_PREEMPTED) {
-			error("*** %s CANCELLED AT %s DUE TO PREEMPTION ***",
-			      entity, time_str);
+			error("*** %s ON %s CANCELLED AT %s DUE TO PREEMPTION ***",
+			      entity, job->node_name, time_str);
 			msg_sent = 1;
 		} else if (sig == SIG_NODE_FAIL) {
-			error("*** %s CANCELLED AT %s DUE TO NODE FAILURE ***",
-			      entity, time_str);
+			error("*** %s ON %s CANCELLED AT %s DUE TO NODE "
+			      "FAILURE, SEE SLURMCTLD LOG FOR DETAILS ***",
+			      entity, job->node_name, time_str);
+			msg_sent = 1;
+		} else if (sig == SIG_REQUEUED) {
+			error("*** %s ON %s CANCELLED AT %s DUE TO JOB REQUEUE ***",
+			      entity, job->node_name, time_str);
 			msg_sent = 1;
 		} else if (sig == SIG_FAILURE) {
-			error("*** %s FAILED (non-zero exit code or other "
-			      "failure mode) ***", entity);
+			error("*** %s ON %s FAILED (non-zero exit code or other "
+			      "failure mode) ***",
+			      entity, job->node_name);
 			msg_sent = 1;
 		} else if ((sig == SIGTERM) || (sig == SIGKILL)) {
-			error("*** %s CANCELLED AT %s ***", entity, time_str);
+			error("*** %s ON %s CANCELLED AT %s ***",
+			      entity, job->node_name, time_str);
 			msg_sent = 1;
 		}
 	}
 	if ((sig == SIG_TIME_LIMIT) || (sig == SIG_NODE_FAIL) ||
-	    (sig == SIG_PREEMPTED)  || (sig == SIG_FAILURE))
+	    (sig == SIG_PREEMPTED)  || (sig == SIG_FAILURE) ||
+	    (sig == SIG_REQUEUED))
 		goto done;
 
 	if (sig == SIG_ABORT) {
@@ -762,11 +844,11 @@ _handle_signal_container(int fd, stepd_step_rec_t *job, uid_t uid)
 		job->aborted = true;
 	}
 
-	pthread_mutex_lock(&suspend_mutex);
+	slurm_mutex_lock(&suspend_mutex);
 	if (suspended && (sig != SIGKILL)) {
 		rc = -1;
 		errnum = ESLURMD_STEP_SUSPENDED;
-		pthread_mutex_unlock(&suspend_mutex);
+		slurm_mutex_unlock(&suspend_mutex);
 		goto done;
 	}
 
@@ -774,7 +856,32 @@ _handle_signal_container(int fd, stepd_step_rec_t *job, uid_t uid)
 		int i;
 		for (i = 0; i < job->node_tasks; i++)
 			pdebug_wake_process(job, job->task[i]->pid);
-		pthread_mutex_unlock(&suspend_mutex);
+		slurm_mutex_unlock(&suspend_mutex);
+		goto done;
+	}
+
+	if (flag & KILL_JOB_BATCH
+	    && job->stepid == SLURM_BATCH_SCRIPT) {
+		/* We should only signal the batch script
+		 * and nothing else, the job pgid is the
+		 * equal to the pid of the batch script.
+		 */
+		if (kill(job->pgid, sig) < 0) {
+			error("%s: failed signal %d container pid"
+			      "%u job %u.%u %m",
+			      __func__, sig, job->pgid,
+			      job->jobid, job->stepid);
+			rc = SLURM_ERROR;
+			errnum = errno;
+			slurm_mutex_unlock(&suspend_mutex);
+			goto done;
+		}
+		rc = SLURM_SUCCESS;
+		errnum = 0;
+		verbose("%s: sent signal %d to container pid %u job %u.%u",
+			__func__, sig, job->pgid,
+			job->jobid, job->stepid);
+		slurm_mutex_unlock(&suspend_mutex);
 		goto done;
 	}
 
@@ -790,7 +897,7 @@ _handle_signal_container(int fd, stepd_step_rec_t *job, uid_t uid)
 		verbose("Sent signal %d to %u.%u",
 			sig, job->jobid, job->stepid);
 	}
-	pthread_mutex_unlock(&suspend_mutex);
+	slurm_mutex_unlock(&suspend_mutex);
 
 done:
 	/* Send the return code and errnum */
@@ -847,10 +954,10 @@ _handle_checkpoint_tasks(int fd, stepd_step_rec_t *job, uid_t uid)
 		goto done;
 	}
 
-	pthread_mutex_lock(&suspend_mutex);
+	slurm_mutex_lock(&suspend_mutex);
 	if (suspended) {
 		rc = ESLURMD_STEP_SUSPENDED;
-		pthread_mutex_unlock(&suspend_mutex);
+		slurm_mutex_unlock(&suspend_mutex);
 		goto done;
 	}
 
@@ -873,7 +980,7 @@ _handle_checkpoint_tasks(int fd, stepd_step_rec_t *job, uid_t uid)
 			job->jobid, job->stepid);
 	}
 
-	pthread_mutex_unlock(&suspend_mutex);
+	slurm_mutex_unlock(&suspend_mutex);
 
 done:
 	/* Send the return code */
@@ -973,10 +1080,11 @@ _handle_terminate(int fd, stepd_step_rec_t *job, uid_t uid)
 	/*
 	 * Signal the container with SIGKILL
 	 */
-	pthread_mutex_lock(&suspend_mutex);
+	slurm_mutex_lock(&suspend_mutex);
 	if (suspended) {
 		debug("Terminating suspended job step %u.%u",
 		      job->jobid, job->stepid);
+		suspended = false;
 	}
 
 	if (proctrack_g_signal(job->cont_id, SIGKILL) < 0) {
@@ -988,7 +1096,7 @@ _handle_terminate(int fd, stepd_step_rec_t *job, uid_t uid)
 		verbose("Sent SIGKILL signal to %u.%u",
 			job->jobid, job->stepid);
 	}
-	pthread_mutex_unlock(&suspend_mutex);
+	slurm_mutex_unlock(&suspend_mutex);
 
 done:
 	/* Send the return code and errnum */
@@ -1015,7 +1123,10 @@ _handle_attach(int fd, stepd_step_rec_t *job, uid_t uid)
 	safe_read(fd, &srun->ioaddr, sizeof(slurm_addr_t));
 	safe_read(fd, &srun->resp_addr, sizeof(slurm_addr_t));
 	safe_read(fd, srun->key, SLURM_IO_KEY_SIZE);
+	safe_read(fd, &srun->protocol_version, sizeof(int));
 
+	if (!srun->protocol_version)
+		srun->protocol_version = (uint16_t)NO_VAL;
 	/*
 	 * Check if jobstep is actually running.
 	 */
@@ -1107,6 +1218,150 @@ rwfail:
 	return SLURM_FAILURE;
 }
 
+static void _block_on_pid(pid_t pid)
+{
+	/* I wish there was another way to wait on a foreign pid, but
+	 * I was unable to find one.
+	 */
+	while (kill(pid, 0) != -1)
+		sleep(1);
+}
+
+/* Wait for the pid given and when it ends get and children it might
+ * of left behind and wait on them instead.
+ */
+static void *_wait_extern_pid(void *args)
+{
+	extern_pid_t *extern_pid = (extern_pid_t *)args;
+
+	stepd_step_rec_t *job = extern_pid->job;
+	pid_t pid = extern_pid->pid;
+
+	jobacctinfo_t *jobacct = NULL;
+	pid_t *pids = NULL;
+	int npids = 0, i;
+	char	proc_stat_file[256];	/* Allow ~20x extra length */
+	FILE *stat_fp = NULL;
+	int fd;
+	char sbuf[256], *tmp, state[1];
+	int num_read, ppid;
+
+	xfree(extern_pid);
+
+	//info("waiting on pid %d", pid);
+	_block_on_pid(pid);
+	//info("done with pid %d %d: %m", pid, rc);
+	jobacct = jobacct_gather_remove_task(pid);
+	if (jobacct) {
+		job->jobacct->energy.consumed_energy = 0;
+		jobacctinfo_aggregate(job->jobacct, jobacct);
+		jobacctinfo_destroy(jobacct);
+	}
+	acct_gather_profile_g_task_end(pid);
+
+	/* See if we have any children of init left and add them to track. */
+	proctrack_g_get_pids(job->cont_id, &pids, &npids);
+	for (i = 0; i < npids; i++) {
+		snprintf(proc_stat_file, 256, "/proc/%d/stat", pids[i]);
+		if (!(stat_fp = fopen(proc_stat_file, "r")))
+			continue;  /* Assume the process went away */
+		fd = fileno(stat_fp);
+		fcntl(fd, F_SETFD, FD_CLOEXEC);
+
+		num_read = read(fd, sbuf, (sizeof(sbuf) - 1));
+
+		if (num_read <= 0)
+			goto next_pid;
+
+		sbuf[num_read] = '\0';
+
+		/* get to the end of cmd name */
+		tmp = strrchr(sbuf, ')');
+		*tmp = '\0';	/* replace trailing ')' with NULL */
+		/* skip space after ')' too */
+		sscanf(tmp + 2,	"%c %d ", state, &ppid);
+
+		if (ppid == 1) {
+			debug2("adding tracking of orphaned process %d",
+			       pids[i]);
+			_handle_add_extern_pid_internal(job, pids[i]);
+		}
+	next_pid:
+		fclose(stat_fp);
+	}
+
+	return NULL;
+}
+
+static int _handle_add_extern_pid_internal(stepd_step_rec_t *job, pid_t pid)
+{
+	pthread_t thread_id;
+	pthread_attr_t attr;
+	extern_pid_t *extern_pid;
+	jobacct_id_t jobacct_id;
+	int retries = 0, rc = SLURM_SUCCESS;
+
+	if (job->stepid != SLURM_EXTERN_CONT) {
+		error("%s: non-extern step (%u) given for job %u.",
+		      __func__, job->stepid, job->jobid);
+		return SLURM_FAILURE;
+	}
+
+	debug("%s: for job %u.%u, pid %d",
+	      __func__, job->jobid, job->stepid, pid);
+
+	extern_pid = xmalloc(sizeof(extern_pid_t));
+	extern_pid->job = job;
+	extern_pid->pid = pid;
+
+	/* track pid: add outside of the below thread so that the pam module
+	 * waits until the parent pid is added, before letting the parent spawn
+	 * any children. */
+	jobacct_id.taskid = job->nodeid;
+	jobacct_id.nodeid = job->nodeid;
+	jobacct_id.job = job;
+
+	proctrack_g_add(job, pid);
+	task_g_add_pid(pid);
+	jobacct_gather_add_task(pid, &jobacct_id, 1);
+
+	/* spawn a thread that will wait on the pid given */
+	slurm_attr_init(&attr);
+	pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+	while (pthread_create(&thread_id, &attr,
+			      &_wait_extern_pid, (void *) extern_pid)) {
+		error("%s: pthread_create: %m", __func__);
+		if (++retries > MAX_RETRIES) {
+			error("%s: Can't create pthread", __func__);
+			rc = SLURM_FAILURE;
+			break;
+		}
+		usleep(10);	/* sleep and again */
+	}
+	slurm_attr_destroy(&attr);
+
+	return rc;
+}
+
+static int
+_handle_add_extern_pid(int fd, stepd_step_rec_t *job)
+{
+	int rc = SLURM_SUCCESS;
+	pid_t pid;
+
+	safe_read(fd, &pid, sizeof(pid_t));
+
+	rc = _handle_add_extern_pid_internal(job, pid);
+
+	/* Send the return code */
+	safe_write(fd, &rc, sizeof(int));
+
+	debug("Leaving _handle_add_extern_pid");
+	return SLURM_SUCCESS;
+rwfail:
+	return SLURM_FAILURE;
+}
+
 static int
 _handle_daemon_pid(int fd, stepd_step_rec_t *job)
 {
@@ -1159,11 +1414,11 @@ _handle_suspend(int fd, stepd_step_rec_t *job, uid_t uid)
 	/*
 	 * Signal the container
 	 */
-	pthread_mutex_lock(&suspend_mutex);
+	slurm_mutex_lock(&suspend_mutex);
 	if (suspended) {
 		rc = -1;
 		errnum = ESLURMD_STEP_SUSPENDED;
-		pthread_mutex_unlock(&suspend_mutex);
+		slurm_mutex_unlock(&suspend_mutex);
 		goto done;
 	} else {
 		if (!job->batch && switch_g_job_step_pre_suspend(job))
@@ -1201,7 +1456,7 @@ _handle_suspend(int fd, stepd_step_rec_t *job, uid_t uid)
 	if (!job->batch && core_spec_g_suspend(job->cont_id, job_core_spec))
 		error("core_spec_g_suspend: %m");
 
-	pthread_mutex_unlock(&suspend_mutex);
+	slurm_mutex_unlock(&suspend_mutex);
 
 done:
 	/* Send the return code and errno */
@@ -1244,11 +1499,11 @@ _handle_resume(int fd, stepd_step_rec_t *job, uid_t uid)
 	/*
 	 * Signal the container
 	 */
-	pthread_mutex_lock(&suspend_mutex);
+	slurm_mutex_lock(&suspend_mutex);
 	if (!suspended) {
 		rc = -1;
 		errnum = ESLURMD_STEP_NOTSUSPENDED;
-		pthread_mutex_unlock(&suspend_mutex);
+		slurm_mutex_unlock(&suspend_mutex);
 		goto done;
 	} else {
 		if (!job->batch && switch_g_job_step_pre_resume(job))
@@ -1267,10 +1522,12 @@ _handle_resume(int fd, stepd_step_rec_t *job, uid_t uid)
 	if (!job->batch && switch_g_job_step_post_resume(job))
 		error("switch_g_job_step_post_resume: %m");
 	/* set the cpu frequencies if cpu_freq option used */
-	if (job->cpu_freq != NO_VAL)
+	if (job->cpu_freq_min != NO_VAL || job->cpu_freq_max != NO_VAL ||
+	    job->cpu_freq_gov != NO_VAL) {
 		cpu_freq_set(job);
+	}
 
-	pthread_mutex_unlock(&suspend_mutex);
+	slurm_mutex_unlock(&suspend_mutex);
 
 done:
 	/* Send the return code and errno */
@@ -1293,7 +1550,6 @@ _handle_completion(int fd, stepd_step_rec_t *job, uid_t uid)
 	char* buf;
 	int len;
 	Buf buffer;
-	int version;	/* For future use */
 	bool lock_set = false;
 
 	debug("_handle_completion for job %u.%u",
@@ -1311,7 +1567,6 @@ _handle_completion(int fd, stepd_step_rec_t *job, uid_t uid)
 		return SLURM_SUCCESS;
 	}
 
-	safe_read(fd, &version, sizeof(int));
 	safe_read(fd, &first, sizeof(int));
 	safe_read(fd, &last, sizeof(int));
 	safe_read(fd, &step_rc, sizeof(int));
@@ -1336,7 +1591,7 @@ _handle_completion(int fd, stepd_step_rec_t *job, uid_t uid)
 	/*
 	 * Record the completed nodes
 	 */
-	pthread_mutex_lock(&step_complete.lock);
+	slurm_mutex_lock(&step_complete.lock);
 	lock_set = true;
 	if (! step_complete.wait_children) {
 		rc = -1;
@@ -1378,14 +1633,14 @@ timeout:
 	safe_write(fd, &rc, sizeof(int));
 	safe_write(fd, &errnum, sizeof(int));
 	pthread_cond_signal(&step_complete.cond);
-	pthread_mutex_unlock(&step_complete.lock);
+	slurm_mutex_unlock(&step_complete.lock);
 
 	return SLURM_SUCCESS;
 
 
 rwfail:	if (lock_set) {
 		pthread_cond_signal(&step_complete.cond);
-		pthread_mutex_unlock(&step_complete.lock);
+		slurm_mutex_unlock(&step_complete.lock);
 	}
 	return SLURM_FAILURE;
 }
@@ -1513,4 +1768,20 @@ done:
 	return SLURM_SUCCESS;
 rwfail:
 	return SLURM_FAILURE;
+}
+
+extern void wait_for_resumed(uint16_t msg_type)
+{
+	int i;
+
+	for (i = 0; ; i++) {
+		if (i)
+			sleep(1);
+		if (!suspended)
+			return;
+		if (i == 0) {
+			info("defer sending msg_type %u to suspended job",
+			     msg_type);
+		}
+	}
 }

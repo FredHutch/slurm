@@ -53,10 +53,10 @@
 #include <strings.h>
 
 #include "src/common/slurm_xlator.h"
+#include "src/common/net.h"
+#include "src/common/slurm_mpi.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
-#include "src/common/net.h"
-#include "src/common/mpi.h"
 
 #include "src/plugins/mpi/mpichgm/mpichgm.h"
 
@@ -332,7 +332,7 @@ gmpi_state_destroy(gmpi_state_t *st)
 extern gmpi_state_t *
 gmpi_thr_create(const mpi_plugin_client_info_t *job, char ***env)
 {
-	short port;
+	uint16_t port;
 	pthread_attr_t attr;
 	gmpi_state_t *st = NULL;
 

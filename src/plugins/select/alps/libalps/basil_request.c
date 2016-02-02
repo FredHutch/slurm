@@ -191,22 +191,23 @@ static void *_timer_func(void *raw_data)
 	pid_t child = *(pid_t *)raw_data;
 	int time_out;
 	struct timespec ts;
+	struct timeval now;
 
 	time_out = cray_conf->apbasil_timeout;
 	debug2("This is a timer thread for process: %d (slurmctld)--"
 	       "timeout: %d, apbasil pid: %d\n", getpid(), time_out, child);
 
-	pthread_mutex_lock(&timer_lock);
-	ts.tv_sec  = time(NULL);
-	ts.tv_nsec = 0;
-	ts.tv_sec += time_out;
+	slurm_mutex_lock(&timer_lock);
+	gettimeofday(&now, NULL);
+	ts.tv_sec = now.tv_sec + time_out;
+	ts.tv_nsec = now.tv_usec * 1000;
 	if (pthread_cond_timedwait(&timer_cond, &timer_lock, &ts) == ETIMEDOUT){
 		info("Apbasil taking too long--terminating apbasil pid: %d",
 		     child);
 		kill(child, SIGKILL);
 		debug2("Exiting timer thread, apbasil pid had been: %d", child);
 	}
-	pthread_mutex_unlock(&timer_lock);
+	slurm_mutex_unlock(&timer_lock);
 	pthread_exit(NULL);
 }
 
@@ -320,9 +321,9 @@ int basil_request(struct basil_parse_data *bp)
 	if (time_it_out) {
 		slurm_attr_destroy(&attr);
 		debug2("Killing the timer thread.");
-		pthread_mutex_lock(&timer_lock);
+		slurm_mutex_lock(&timer_lock);
 		pthread_cond_broadcast(&timer_cond);
-		pthread_mutex_unlock(&timer_lock);
+		slurm_mutex_unlock(&timer_lock);
 	}
 
 	END_TIMER;

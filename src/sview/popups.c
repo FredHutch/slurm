@@ -262,8 +262,7 @@ static void _layout_conf_ctl(GtkTreeStore *treestore,
 
 	ret_list = slurm_ctl_conf_2_key_pairs(slurm_ctl_conf_ptr);
 	_gtk_print_key_pairs(ret_list, tmp_str, 1, treestore, &iter);
-	if (ret_list)
-		list_destroy(ret_list);
+	FREE_NULL_LIST(ret_list);
 
 	_gtk_print_key_pairs(slurm_ctl_conf_ptr->acct_gather_conf,
 			     "Account Gather", 0, treestore, &iter);
@@ -332,9 +331,8 @@ static void _layout_conf_dbd(GtkTreeStore *treestore)
 	private_data_string(private_data, tmp_str, sizeof(tmp_str));
 	add_display_treestore_line(update, treestore, &iter,
 				   "PrivateData", tmp_str);
-	user_name = uid_to_string(slurm_user_id);
+	user_name = uid_to_string_cached(slurm_user_id);
 	sprintf(tmp_str, "%s(%u)", user_name, slurm_user_id);
-	xfree(user_name);
 	add_display_treestore_line(update, treestore, &iter,
 				   "SlurmUserId", tmp_str);
 	add_display_treestore_line(update, treestore, &iter,
@@ -421,8 +419,7 @@ extern void create_dbconfig_popup(GtkAction *action, gpointer user_data)
 
 	gtk_widget_show_all(popup);
 
-	if (dbd_config_list)
-		list_destroy(dbd_config_list);
+	FREE_NULL_LIST(dbd_config_list);
 
 	return;
 }
@@ -693,11 +690,12 @@ extern void create_search_popup(GtkAction *action, gpointer user_data)
 			{G_TYPE_NONE, JOB_NODE_FAIL, "Node Failure", TRUE, -1},
 			{G_TYPE_NONE, JOB_PREEMPTED, "Preempted", TRUE, -1},
 			{G_TYPE_NONE, JOB_BOOT_FAIL, "Boot Failure", TRUE, -1},
+			{G_TYPE_NONE, JOB_DEADLINE, "Deadline", TRUE, -1},
 			{G_TYPE_NONE, -1, NULL, FALSE, -1}
 		};
 
 		sview_search_info.search_type = SEARCH_JOB_STATE;
-		entry = create_pulldown_combo(pulldown_display_data, JOB_END);
+		entry = create_pulldown_combo(pulldown_display_data);
 		label = gtk_label_new("Which state?");
 	} else if (!strcmp(name, "partition_name")) {
 		sview_search_info.search_type = SEARCH_PARTITION_NAME;
@@ -713,7 +711,7 @@ extern void create_search_popup(GtkAction *action, gpointer user_data)
 		};
 
 		sview_search_info.search_type = SEARCH_PARTITION_STATE;
-		entry = create_pulldown_combo(pulldown_display_data, 5);
+		entry = create_pulldown_combo(pulldown_display_data);
 		label = gtk_label_new("Which state?");
 	} else if (!strcmp(name, "node_name")) {
 		sview_search_info.search_type = SEARCH_NODE_NAME;
@@ -726,24 +724,39 @@ extern void create_search_popup(GtkAction *action, gpointer user_data)
 					      "(ranged or comma separated)");
 	} else if (!strcmp(name, "node_state")) {
 		display_data_t pulldown_display_data[] = {
+			{G_TYPE_NONE, NODE_STATE_ALLOCATED, "Allocated",
+			 TRUE, -1},
+			{G_TYPE_NONE, NODE_STATE_COMPLETING, "Completing",
+			 TRUE, -1},
 			{G_TYPE_NONE, NODE_STATE_DOWN, "Down", TRUE, -1},
 			{G_TYPE_NONE, NODE_STATE_ALLOCATED | NODE_STATE_DRAIN,
 			 "Draining", TRUE, -1},
 			{G_TYPE_NONE, NODE_STATE_IDLE | NODE_STATE_DRAIN,
 			 "Drained", TRUE, -1},
-			{G_TYPE_NONE, NODE_STATE_IDLE, "Idle", TRUE, -1},
-			{G_TYPE_NONE, NODE_STATE_ALLOCATED, "Allocated",
-			 TRUE, -1},
 			{G_TYPE_NONE, NODE_STATE_ERROR, "Error", TRUE, -1},
+			{G_TYPE_NONE, NODE_STATE_FAIL, "Fail", TRUE, -1},
+			{G_TYPE_NONE, NODE_STATE_FAIL | NODE_STATE_ALLOCATED,
+			 "Failing", TRUE, -1},
+			{G_TYPE_NONE, NODE_STATE_FUTURE, "Future", TRUE, -1},
+			{G_TYPE_NONE, NODE_STATE_IDLE, "Idle", TRUE, -1},
+			{G_TYPE_NONE, NODE_STATE_MAINT, "Maint", TRUE, -1},
 			{G_TYPE_NONE, NODE_STATE_MIXED, "Mixed", TRUE, -1},
-			{G_TYPE_NONE, NODE_STATE_COMPLETING, "Completing",
-			 TRUE, -1},
+			{G_TYPE_NONE, NODE_STATE_NO_RESPOND,
+			 "No Respond", TRUE, -1},
+			{G_TYPE_NONE, NODE_STATE_NET | NODE_STATE_IDLE,
+			 "PerfCTRs", TRUE, -1},
+			{G_TYPE_NONE, NODE_STATE_POWER_SAVE,
+			 "Power Down", TRUE, -1},
+			{G_TYPE_NONE, NODE_STATE_POWER_UP,
+			 "Power Up", TRUE, -1},
+			{G_TYPE_NONE, NODE_STATE_RES | NODE_STATE_IDLE,
+			 "Reserved", TRUE, -1},
 			{G_TYPE_NONE, NODE_STATE_UNKNOWN, "Unknown", TRUE, -1},
 			{G_TYPE_NONE, -1, NULL, FALSE, -1}
 		};
 
 		sview_search_info.search_type = SEARCH_NODE_STATE;
-		entry = create_pulldown_combo(pulldown_display_data, PAGE_CNT);
+		entry = create_pulldown_combo(pulldown_display_data);
 		label = gtk_label_new("Which state?");
 	} else if ((cluster_flags & CLUSTER_FLAG_BG)
 		   && !strcmp(name, "bg_block_name")) {
@@ -793,7 +806,7 @@ extern void create_search_popup(GtkAction *action, gpointer user_data)
 			}
 		}
 		sview_search_info.search_type = SEARCH_BLOCK_STATE;
-		entry = create_pulldown_combo(pulldown_display_data, PAGE_CNT);
+		entry = create_pulldown_combo(pulldown_display_data);
 		label = gtk_label_new("Which state?");
 	} else if (!strcmp(name, "reservation_name")) {
 		sview_search_info.search_type = SEARCH_RESERVATION_NAME;
@@ -1023,7 +1036,7 @@ extern void change_grid_popup(GtkAction *action, gpointer user_data)
 			 * here and it will be remade in get_system_stats(). */
 			if ((width > working_sview_config.grid_x_width)
 			    && grid_button_list) {
-				list_destroy(grid_button_list);
+				FREE_NULL_LIST(grid_button_list);
 				grid_button_list = NULL;
 				refresh = 1;
 			}

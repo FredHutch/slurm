@@ -36,13 +36,7 @@
 #include "src/slurmd/common/job_container_plugin.h"
 #include "src/slurmd/slurmstepd/step_terminate_monitor.h"
 
-#if defined(__NetBSD__)
-#include <sys/types.h> /* for pid_t */
-#include <sys/signal.h> /* for SIGKILL */
-#endif
-#if defined(__FreeBSD__)
 #include <signal.h>
-#endif
 #include <stdlib.h>
 #include <sys/wait.h>
 #include <sys/errno.h>
@@ -67,10 +61,10 @@ void step_terminate_monitor_start(uint32_t jobid, uint32_t stepid)
 	slurm_ctl_conf_t *conf;
 	pthread_attr_t attr;
 
-	pthread_mutex_lock(&lock);
+	slurm_mutex_lock(&lock);
 
 	if (running_flag) {
-		pthread_mutex_unlock(&lock);
+		slurm_mutex_unlock(&lock);
 		return;
 	}
 
@@ -78,7 +72,7 @@ void step_terminate_monitor_start(uint32_t jobid, uint32_t stepid)
 	if (conf->unkillable_program == NULL) {
 		/* do nothing */
 		slurm_conf_unlock();
-		pthread_mutex_unlock(&lock);
+		slurm_mutex_unlock(&lock);
 		return;
 	}
 	timeout = conf->unkillable_timeout;
@@ -92,29 +86,29 @@ void step_terminate_monitor_start(uint32_t jobid, uint32_t stepid)
 	recorded_jobid = jobid;
 	recorded_stepid = stepid;
 
-	pthread_mutex_unlock(&lock);
+	slurm_mutex_unlock(&lock);
 
 	return;
 }
 
 void step_terminate_monitor_stop(void)
 {
-	pthread_mutex_lock(&lock);
+	slurm_mutex_lock(&lock);
 
 	if (!running_flag) {
-		pthread_mutex_unlock(&lock);
+		slurm_mutex_unlock(&lock);
 		return;
 	}
 	if (stop_flag) {
 		error("step_terminate_monitor_stop: already stopped");
-		pthread_mutex_unlock(&lock);
+		slurm_mutex_unlock(&lock);
 		return;
 	}
 
 	stop_flag = 1;
 	debug("step_terminate_monitor_stop signalling condition");
 	pthread_cond_signal(&cond);
-	pthread_mutex_unlock(&lock);
+	slurm_mutex_unlock(&lock);
 
 	if (pthread_join(tid, NULL) != 0) {
 		error("step_terminate_monitor_stop: pthread_join: %m");
@@ -134,7 +128,7 @@ static void *_monitor(void *notused)
 
 	ts.tv_sec = time(NULL) + 1 + timeout;
 
-	pthread_mutex_lock(&lock);
+	slurm_mutex_lock(&lock);
 	if (stop_flag)
 		goto done;
 
@@ -145,7 +139,7 @@ static void *_monitor(void *notused)
 		error("Error waiting on condition in _monitor: %m");
 	}
 done:
-	pthread_mutex_unlock(&lock);
+	slurm_mutex_unlock(&lock);
 
 	info("_monitor is stopping");
 	return NULL;

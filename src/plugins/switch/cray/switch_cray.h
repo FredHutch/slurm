@@ -38,6 +38,7 @@
 #ifndef SWITCH_CRAY_H
 #define SWITCH_CRAY_H
 
+#include "src/common/slurm_xlator.h"
 #if     HAVE_CONFIG_H
 #include "config.h"
 #endif
@@ -73,31 +74,6 @@
 // Magic value signifying that jobinfo was NULL, don't unpack
 #define CRAY_NULL_JOBINFO_MAGIC	0xDEAFDEAF
 
-// File to save plugin state to
-#define CRAY_SWITCH_STATE	"/switch_cray_state"
-
-// Temporary file containing new plugin state
-#define CRAY_SWITCH_STATE_NEW	CRAY_SWITCH_STATE".new"
-
-// File containing previous plugin state
-#define CRAY_SWITCH_STATE_OLD	CRAY_SWITCH_STATE".old"
-
-// Minimum PMI port to allocate
-#define MIN_PORT		20000
-
-// Maximum PMI port to allocate
-#define MAX_PORT		60000
-
-// Number of ports to allocate
-#define PORT_CNT		(MAX_PORT - MIN_PORT + 1)
-
-// Length of bitmap in bytes (see _bitstr_words in src/common/bitstring.c)
-#define PORT_BITMAP_LEN	((((PORT_CNT + BITSTR_MAXPOS) >> BITSTR_SHIFT) \
-			 + BITSTR_OVERHEAD) * sizeof(bitstr_t))
-
-// Number of times to attempt allocating a port when none are available
-#define ATTEMPTS		2
-
 // Maximum network resource scaling (in percent)
 #define MAX_SCALING		100
 
@@ -109,6 +85,12 @@
 
 // alpsc_pre_suspend() timeout
 #define SUSPEND_TIMEOUT_MSEC	(10*1000)
+
+// Environment variables set for each task
+#define CRAY_NUM_COOKIES_ENV	"CRAY_NUM_COOKIES"
+#define CRAY_COOKIES_ENV	"CRAY_COOKIES"
+#define PMI_CONTROL_PORT_ENV	"PMI_CONTROL_PORT"
+#define PMI_CRAY_NO_SMP_ENV	"PMI_CRAY_NO_SMP_ORDER"
 
 /**********************************************************
  * Type definitions
@@ -133,14 +115,8 @@ typedef struct slurm_cray_jobinfo {
 	// Array of ptags
 	int *ptags;
 
-	// Port for PMI communications
+	// Port (for compatibility with 14.03, remove in the future)
 	uint32_t port;
-
-	// Slurm job id
-	uint32_t jobid;
-
-	// Slurm step id
-	uint32_t stepid;
 
 	// Cray Application ID (Slurm hash)
 	uint64_t apid;
@@ -149,32 +125,16 @@ typedef struct slurm_cray_jobinfo {
 /**********************************************************
  * Global variables
  **********************************************************/
-#ifndef HAVE_CRAY_NETWORK
-// Which ports are reserved (holds PORT_CNT bits)
-extern bitstr_t *port_resv;
-
-// Last allocated port index
-extern uint32_t last_alloc_port;
-
-// Mutex controlling access to port variables
-extern pthread_mutex_t port_mutex;
-#endif
-
 // Debug flags
-extern uint32_t debug_flags;
+extern uint64_t debug_flags;
 
 /**********************************************************
  * Function declarations
  **********************************************************/
-// Implemented in ports.c
-extern int assign_port(uint32_t *ret_port);
-extern int release_port(uint32_t real_port);
-
 // Implemented in pe_info.c
 #if defined(HAVE_NATIVE_CRAY) || defined(HAVE_CRAY_NETWORK)
 extern int build_alpsc_pe_info(stepd_step_rec_t *job,
-			       slurm_cray_jobinfo_t *sw_job,
-			       alpsc_peInfo_t *alpsc_pe_info);
+			       alpsc_peInfo_t *alpsc_pe_info, int *cmd_index);
 extern void free_alpsc_pe_info(alpsc_peInfo_t *alpsc_pe_info);
 #endif
 
@@ -202,6 +162,14 @@ extern void print_jobinfo(slurm_cray_jobinfo_t *job);
 extern int write_iaa_file(stepd_step_rec_t *job, slurm_cray_jobinfo_t *sw_job,
 		   int *ptags, int num_ptags, alpsc_peInfo_t *alpsc_pe_info);
 extern void unlink_iaa_file(slurm_cray_jobinfo_t *job);
+
+// Implemented in cookies.c
+extern int start_lease_extender(void);
+extern int cleanup_lease_extender(void);
+extern int lease_cookies(slurm_cray_jobinfo_t *job, int32_t *nodes,
+			 int32_t num_nodes);
+extern int track_cookies(slurm_cray_jobinfo_t *job);
+extern int release_cookies(slurm_cray_jobinfo_t *job);
 #endif /* HAVE_NATIVE_CRAY_GA || HAVE_CRAY_NETWORK */
 
 /**********************************************************

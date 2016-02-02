@@ -83,15 +83,12 @@
  * of how this plugin satisfies that application.  SLURM will only load
  * a task plugin if the plugin_type string has a prefix of "task/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as this API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]        = "launch SLURM plugin";
 const char plugin_type[]        = "launch/slurm";
-const uint32_t plugin_version   = 101;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
 static srun_job_t *local_srun_job = NULL;
 static uint32_t *local_global_rc = NULL;
@@ -102,6 +99,7 @@ static bool retry_step_begin = false;
 static int  retry_step_cnt = 0;
 
 extern int launch_p_step_terminate();
+extern char **environ;
 
 static char *_hostset_to_string(hostset_t hs)
 {
@@ -316,7 +314,7 @@ static void _task_finish(task_exit_msg_t *msg)
 			_handle_openmpi_port_error(tasks, hosts,
 						   local_srun_job->step_ctx);
 		} else {
-			if (reduce_task_exit_msg == 0 || 
+			if (reduce_task_exit_msg == 0 ||
 			    msg_printed == 0 ||
 			    msg->return_code != last_task_exit_rc) {
 				error("%s: %s %s: Exited with exit code %d",
@@ -339,7 +337,6 @@ static void _task_finish(task_exit_msg_t *msg)
 			verbose("%s: %s %s: %s%s",
 				hosts, task_str, tasks, signal_str, core_str);
 		} else {
-			rc = msg->return_code;
 			if (reduce_task_exit_msg == 0 ||
 			    msg_printed == 0 ||
 			    msg->return_code != last_task_exit_rc) {
@@ -361,7 +358,7 @@ static void _task_finish(task_exit_msg_t *msg)
 
 	if (task_state_first_abnormal_exit(task_state)
 	    && _kill_on_bad_exit())
-  		launch_p_step_terminate();
+		launch_p_step_terminate();
 
 	if (task_state_first_exit(task_state) && (opt.max_wait > 0))
 		_setup_max_wait_timer();
@@ -454,7 +451,7 @@ extern int launch_p_handle_multi_prog_verify(int command_pos)
 		}
 		_load_multi(&opt.argc, opt.argv);
 		if (verify_multi_name(opt.argv[command_pos], &opt.ntasks,
-				      &opt.ntasks_set))
+				      &opt.ntasks_set, &opt.multi_prog_cmds))
 			exit(error_exit);
 		return 1;
 	} else
@@ -465,13 +462,56 @@ extern int launch_p_create_job_step(srun_job_t *job, bool use_all_cpus,
 				    void (*signal_function)(int),
 				    sig_atomic_t *destroy_job)
 {
+	if (launch_common_create_job_step(job, use_all_cpus,
+					  signal_function,
+					  destroy_job) != SLURM_SUCCESS)
+		return SLURM_ERROR;
+
 	/* set the jobid for totalview */
 	totalview_jobid = NULL;
 	xstrfmtcat(totalview_jobid, "%u", job->jobid);
+	totalview_stepid = NULL;
+	xstrfmtcat(totalview_stepid, "%u", job->stepid);
 
-	return launch_common_create_job_step(job, use_all_cpus,
-					     signal_function,
-					     destroy_job);
+	return SLURM_SUCCESS;
+}
+
+static char **_build_user_env(void)
+{
+	char **dest_array = NULL;
+	char *tmp_env, *tok, *save_ptr = NULL, *eq_ptr, *value;
+	bool all;
+
+	all = false;
+	tmp_env = xstrdup(opt.export_env);
+	tok = strtok_r(tmp_env, ",", &save_ptr);
+	while (tok) {
+
+		if (strcasecmp(tok, "ALL") == 0)
+			all = true;
+
+		if (!strcasecmp(tok, "NONE"))
+			break;
+		eq_ptr = strchr(tok, '=');
+		if (eq_ptr) {
+			eq_ptr[0] = '\0';
+			value = eq_ptr + 1;
+			env_array_overwrite(&dest_array, tok, value);
+		} else {
+			value = getenv(tok);
+			if (value)
+				env_array_overwrite(&dest_array, tok, value);
+		}
+		tok = strtok_r(NULL, ",", &save_ptr);
+	}
+	xfree(tmp_env);
+
+	if (all)
+		env_array_merge(&dest_array, (const char **)environ);
+	else
+		env_array_merge_slurm(&dest_array, (const char **)environ);
+
+	return dest_array;
 }
 
 extern int launch_p_step_launch(
@@ -502,7 +542,7 @@ extern int launch_p_step_launch(
 	launch_params.multi_prog = opt.multi_prog ? true : false;
 	launch_params.cwd = opt.cwd;
 	launch_params.slurmd_debug = opt.slurmd_debug;
-	launch_params.buffered_stdio = !opt.unbuffered;
+	launch_params.buffered_stdio = opt.unbuffered;
 	launch_params.labelio = opt.labelio ? true : false;
 	launch_params.remote_output_filename =fname_remote_string(job->ofname);
 	launch_params.remote_input_filename = fname_remote_string(job->ifname);
@@ -515,6 +555,7 @@ extern int launch_p_step_launch(
 	launch_params.cpu_bind_type = opt.cpu_bind_type;
 	launch_params.mem_bind = opt.mem_bind;
 	launch_params.mem_bind_type = opt.mem_bind_type;
+	launch_params.accel_bind_type = opt.accel_bind_type;
 	launch_params.open_mode = opt.open_mode;
 	if (opt.acctg_freq >= 0)
 		launch_params.acctg_freq = opt.acctg_freq;
@@ -523,7 +564,9 @@ extern int launch_p_step_launch(
 		launch_params.cpus_per_task	= opt.cpus_per_task;
 	else
 		launch_params.cpus_per_task	= 1;
-	launch_params.cpu_freq          = opt.cpu_freq;
+	launch_params.cpu_freq_min      = opt.cpu_freq_min;
+	launch_params.cpu_freq_max      = opt.cpu_freq_max;
+	launch_params.cpu_freq_gov      = opt.cpu_freq_gov;
 	launch_params.task_dist         = opt.distribution;
 	launch_params.ckpt_dir		= opt.ckpt_dir;
 	launch_params.restart_dir       = opt.restart_dir;
@@ -531,6 +574,9 @@ extern int launch_p_step_launch(
 	launch_params.spank_job_env     = opt.spank_job_env;
 	launch_params.spank_job_env_size = opt.spank_job_env_size;
 	launch_params.user_managed_io   = opt.user_managed_io;
+
+	if (opt.export_env)
+		launch_params.env = _build_user_env();
 
 	memcpy(&launch_params.local_fds, cio_fds, sizeof(slurm_step_io_fds_t));
 

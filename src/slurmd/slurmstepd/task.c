@@ -75,17 +75,17 @@
 
 #include "src/common/checkpoint.h"
 #include "src/common/env.h"
+#include "src/common/gres.h"
 #include "src/common/fd.h"
 #include "src/common/log.h"
-#include "src/common/mpi.h"
 #include "src/common/plugstack.h"
-#include "src/slurmd/common/proctrack.h"
+#include "src/common/slurm_mpi.h"
 #include "src/common/switch.h"
-#include "src/slurmd/common/task_plugin.h"
 #include "src/common/xsignal.h"
 #include "src/common/xstring.h"
 #include "src/common/xmalloc.h"
-
+#include "src/slurmd/common/proctrack.h"
+#include "src/slurmd/common/task_plugin.h"
 #include "src/slurmd/slurmd/slurmd.h"
 #include "src/slurmd/slurmstepd/pdebug.h"
 #include "src/slurmd/slurmstepd/task.h"
@@ -247,7 +247,7 @@ _run_script_and_set_env(const char *name, const char *path,
 	close(pfd[1]);
 	f = fdopen(pfd[0], "r");
 	if (f == NULL) {
-		error("Cannot open pipe device");
+		error("Cannot open pipe device: %m");
 		log_fini();
 		exit(1);
 	}
@@ -300,6 +300,16 @@ _build_path(char* fname, char **prog_env)
 	/* check if already absolute path */
 	if (file_name[0] == '/')
 		return file_name;
+	if (file_name[0] == '.') {
+		file_path = (char *)xmalloc(len);
+		dir = (char *)xmalloc(len);
+		if (!getcwd(dir, len))
+			error("getcwd failed: %m");
+		snprintf(file_path, len, "%s/%s", dir, file_name);
+		xfree(file_name);
+		xfree(dir);
+		return file_path;
+	}
 
 	/* search for the file using PATH environment variable */
 	for (i=0; ; i++) {
@@ -315,7 +325,8 @@ _build_path(char* fname, char **prog_env)
 	dir = strtok(path_env, ":");
 	while (dir) {
 		snprintf(file_path, len, "%s/%s", dir, file_name);
-		if (stat(file_path, &stat_buf) == 0)
+		if ((stat(file_path, &stat_buf) == 0)
+		    && (! S_ISDIR(stat_buf.st_mode)))
 			break;
 		dir = strtok(NULL, ":");
 	}
@@ -345,7 +356,7 @@ _setup_mpi(stepd_step_rec_t *job, int ltaskid)
 
 	return mpi_hook_slurmstepd_task(info, &job->env);
 }
-
+extern void block_daemon(void);
 
 /*
  *  Current process is running as the user when this is called.
@@ -357,6 +368,7 @@ exec_task(stepd_step_rec_t *job, int i)
 	int fd, j;
 	stepd_step_task_info_t *task = job->task[i];
 	char **tmp_env;
+	int saved_errno;
 
 	if (i == 0)
 		_make_tmpdir(job);
@@ -377,7 +389,9 @@ exec_task(stepd_step_rec_t *job, int i)
 	job->envtp->distribution = job->task_dist;
 	job->envtp->cpu_bind = xstrdup(job->cpu_bind);
 	job->envtp->cpu_bind_type = job->cpu_bind_type;
-	job->envtp->cpu_freq = job->cpu_freq;
+	job->envtp->cpu_freq_min = job->cpu_freq_min;
+	job->envtp->cpu_freq_max = job->cpu_freq_max;
+	job->envtp->cpu_freq_gov = job->cpu_freq_gov;
 	job->envtp->mem_bind = xstrdup(job->mem_bind);
 	job->envtp->mem_bind_type = job->mem_bind_type;
 	job->envtp->distribution = -1;
@@ -427,15 +441,26 @@ exec_task(stepd_step_rec_t *job, int i)
 
 	/* task-specific pre-launch activities */
 
-	if (spank_user_task (job, i) < 0) {
-		error ("Failed to invoke task plugin stack");
-		exit (1);
-	}
-
 	/* task plugin hook */
 	if (task_g_pre_launch(job)) {
-		error ("Failed task affinity setup");
-		exit (1);
+		error("Failed to invoke task plugins: task_p_pre_launch error");
+		exit(1);
+	}
+	if (!job->batch && job->accel_bind_type) {
+		/* Modify copy of job's environment. Do not alter in place or
+		 * concurrent searches of the environment can generate invalid
+		 * memory references. */
+		job->envtp->env = env_array_copy((const char **) job->env);
+		gres_plugin_step_set_env(&job->envtp->env, job->step_gres_list,
+					 job->accel_bind_type);
+		tmp_env = job->env;
+		job->env = job->envtp->env;
+		env_array_free(tmp_env);
+	}
+
+	if (spank_user_task(job, i) < 0) {
+		error("Failed to invoke spank plugin stack");
+		exit(1);
 	}
 
 	if (conf->task_prolog) {
@@ -483,6 +508,7 @@ exec_task(stepd_step_rec_t *job, int i)
 	}
 
 	execve(task->argv[0], task->argv, job->env);
+	saved_errno = errno;
 
 	/*
 	 * print error message and clean up if execve() returns:
@@ -498,10 +524,12 @@ exec_task(stepd_step_rec_t *job, int i)
 				eol[0] = '\0';
 			else
 				buf[sizeof(buf)-1] = '\0';
+			slurm_seterrno(saved_errno);
 			error("execve(): bad interpreter(%s): %m", buf+2);
 			exit(errno);
 		}
 	}
+	slurm_seterrno(saved_errno);
 	error("execve(): %s: %m", task->argv[0]);
 	exit(errno);
 }
@@ -530,11 +558,9 @@ _make_tmpdir(stepd_step_rec_t *job)
 		 * still work with older systems we include this check.
 		 */
 
-#if defined(__FreeBSD__)
-#define	__GLIBC__ 		(1)
-#define __GLIBC_PREREQ(a,b)	(1)
-#endif
-#if defined __GLIBC__ && __GLIBC_PREREQ(2, 4)
+#if defined(HAVE_FACCESSAT)
+		else if (faccessat(AT_FDCWD, tmpdir, X_OK|W_OK, AT_EACCESS))
+#elif defined(HAVE_EACCESS)
 		else if (eaccess(tmpdir, X_OK|W_OK)) /* check permissions */
 #else
 		else if (euidaccess(tmpdir, X_OK|W_OK))

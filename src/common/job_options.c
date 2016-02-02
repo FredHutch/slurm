@@ -1,6 +1,5 @@
 /*****************************************************************************\
  *  src/common/job_options.c  - Extra job options
- *  $Id$
  *****************************************************************************
  *  Copyright (C) 2002 The Regents of the University of California.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
@@ -132,8 +131,7 @@ void job_options_destroy (job_options_t opts)
 	xassert (opts != NULL);
 	xassert (opts->magic == JOB_OPTIONS_MAGIC);
 
-	if (opts->options)
-		list_destroy (opts->options);
+	FREE_NULL_LIST (opts->options);
 
 	xassert (opts->magic = ~JOB_OPTIONS_MAGIC);
 	xfree (opts);

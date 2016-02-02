@@ -3,7 +3,7 @@
  *****************************************************************************
  *  Copyright (C) 2002-2007 The Regents of the University of California.
  *  Copyright (C) 2008-2010 Lawrence Livermore National Security.
- *  Portions Copyright (C) 2010 SchedMD <http://www.schedmd.com>.
+ *  Portions Copyright (C) 2010-2016 SchedMD <http://www.schedmd.com>.
  *  Produced at Lawrence Livermore National Laboratory (cf, DISCLAIMER).
  *  Written by Joey Ekstrom <ekstrom1@llnl.gov>, Morris Jette <jette1@llnl.gov>
  *  CODE-OCEC-09-009. All rights reserved.
@@ -65,20 +65,25 @@
 #define OPT_LONG_HELP   0x100
 #define OPT_LONG_USAGE  0x101
 #define OPT_LONG_HIDE	0x102
+#define OPT_LONG_NOCONVERT 0x104
 
 /* FUNCTIONS */
 static List  _build_state_list( char* str );
 static List  _build_all_states_list( void );
+static List  _build_part_list( char *parts );
 static char *_get_prefix(char *token);
 static void  _help( void );
-static int   _parse_format( char* );
-static bool  _node_state_equal (int state_id, const char *state_str);
-static int   _node_state_id (char *str);
-static const char * _node_state_list (void);
-static void  _parse_token( char *token, char *field, int *field_size,
-			   bool *right_justify, char **suffix);
-static void  _print_options( void );
-static void  _usage( void );
+static int   _parse_format(char *);
+static int   _parse_long_format(char *);
+static bool  _node_state_equal(int state_id, const char *state_str);
+static int   _node_state_id(char *str);
+static const char * _node_state_list(void);
+static void  _parse_token(char *token, char *field, int *field_size,
+			  bool *right_justify, char **suffix);
+static void  _parse_long_token(char *token, char *sep, int *field_size,
+			       bool *right_justify, char **suffix);
+static void  _print_options(void);
+static void  _usage(void);
 
 /*
  * parse_command_line, fill in params data structure with data
@@ -89,6 +94,9 @@ extern void parse_command_line(int argc, char *argv[])
 	int opt_char;
 	int option_index;
 	hostlist_t host_list;
+	bool long_form = false;
+	bool opt_a_set = false, opt_p_set = false;
+	bool env_a_set = false, env_p_set = false;
 	static struct option long_options[] = {
 		{"all",       no_argument,       0, 'a'},
 		{"bg",        no_argument,       0, 'b'},
@@ -100,8 +108,10 @@ extern void parse_command_line(int argc, char *argv[])
 		{"cluster",   required_argument, 0, 'M'},
 		{"clusters",  required_argument, 0, 'M'},
 		{"nodes",     required_argument, 0, 'n'},
+                {"noconvert", no_argument,       0, OPT_LONG_NOCONVERT},
 		{"Node",      no_argument,       0, 'N'},
 		{"format",    required_argument, 0, 'o'},
+		{"Format",    required_argument, 0, 'O'},
 		{"partition", required_argument, 0, 'p'},
 		{"responding",no_argument,       0, 'r'},
 		{"list-reasons", no_argument,    0, 'R'},
@@ -117,11 +127,22 @@ extern void parse_command_line(int argc, char *argv[])
 		{NULL,        0,                 0, 0}
 	};
 
-	if (getenv("SINFO_ALL"))
+	params.convert_flags = CONVERT_NUM_UNIT_EXACT;
+
+	if (getenv("SINFO_ALL")) {
+		env_a_set = true;
 		params.all_flag = true;
+	}
 	if ( ( env_val = getenv("SINFO_PARTITION") ) ) {
+		env_p_set = true;
 		params.partition = xstrdup(env_val);
+		params.part_list = _build_part_list(env_val);
 		params.all_flag = true;
+	}
+	if (env_a_set && env_p_set) {
+		error("Conflicting options, SINFO_ALL and SINFO_PARTITION, specified. "
+		      "Please choose one or the other.");
+		exit(1);
 	}
 	if ( ( env_val = getenv("SINFO_SORT") ) )
 		params.sort = xstrdup(env_val);
@@ -133,8 +154,9 @@ extern void parse_command_line(int argc, char *argv[])
 		working_cluster_rec = list_peek(params.clusters);
 	}
 
-	while((opt_char = getopt_long(argc, argv, "abdehi:lM:n:No:p:rRsS:t:TvV",
-			long_options, &option_index)) != -1) {
+	while ((opt_char = getopt_long(argc, argv,
+				       "abdehi:lM:n:No:O:p:rRsS:t:TvV",
+				       long_options, &option_index)) != -1) {
 		switch (opt_char) {
 		case (int)'?':
 			fprintf(stderr,
@@ -142,6 +164,9 @@ extern void parse_command_line(int argc, char *argv[])
 			exit(1);
 			break;
 		case (int)'a':
+			opt_a_set = true;
+			xfree(params.partition);
+			FREE_NULL_LIST(params.part_list);
 			params.all_flag = true;
 			break;
 		case (int)'b':
@@ -177,14 +202,16 @@ extern void parse_command_line(int argc, char *argv[])
 			params.long_output = true;
 			break;
 		case (int) 'M':
-			if (params.clusters)
-				list_destroy(params.clusters);
+			FREE_NULL_LIST(params.clusters);
 			if (!(params.clusters =
 			      slurmdb_get_info_cluster(optarg))) {
 				print_db_notok(optarg, 0);
 				exit(1);
 			}
 			working_cluster_rec = list_peek(params.clusters);
+			break;
+		case OPT_LONG_NOCONVERT:
+			params.convert_flags |= CONVERT_NUM_UNIT_NO;
 			break;
 		case (int) 'n':
 			xfree(params.nodes);
@@ -213,9 +240,17 @@ extern void parse_command_line(int argc, char *argv[])
 			xfree(params.format);
 			params.format = xstrdup(optarg);
 			break;
+		case (int) 'O':
+			long_form = true;
+			xfree(params.format);
+			params.format = xstrdup(optarg);
+			break;
 		case (int) 'p':
+			opt_p_set = true;
 			xfree(params.partition);
+			FREE_NULL_LIST(params.part_list);
 			params.partition = xstrdup(optarg);
+			params.part_list = _build_part_list(optarg);
 			params.all_flag = true;
 			break;
 		case (int) 'r':
@@ -260,6 +295,12 @@ extern void parse_command_line(int argc, char *argv[])
 		}
 	}
 
+	if (opt_a_set && opt_p_set) {
+		error("Conflicting options, -a and -p, specified. "
+		      "Please choose one or the other.");
+		exit(1);
+	}
+
 	params.cluster_flags = slurmdb_setup_cluster_flags();
 
 	if ( params.format == NULL ) {
@@ -291,7 +332,11 @@ extern void parse_command_line(int argc, char *argv[])
 			  "%9P %.5a %.10l %.6D %.6t %N";
 		}
 	}
-	_parse_format( params.format );
+
+	if (long_form)
+		_parse_long_format(params.format);
+	else
+		_parse_format(params.format);
 
 	if (params.list_reasons && (params.state_list == NULL)) {
 		params.states = xstrdup ("down,drain,error");
@@ -394,6 +439,29 @@ _build_all_states_list( void )
 	return my_list;
 }
 
+/*
+ * _build_part_list - build a list of partition names
+ * IN parts - comma separated list of partitions
+ * RET List of partition names
+ */
+static List
+_build_part_list(char *parts)
+{
+	List part_list;
+	char *orig, *str, *part;
+
+	orig = str = xstrdup(parts);
+	part_list = list_create(NULL);
+
+	while ((part = _next_tok (",", &str))) {
+		char *tmp_part = xstrdup(part);
+		list_append (part_list, tmp_part);
+	}
+
+	xfree(orig);
+	return (part_list);
+}
+
 static const char *
 _node_state_list (void)
 {
@@ -403,17 +471,20 @@ _node_state_list (void)
 	if (all_states)
 		return (all_states);
 
-	all_states = xstrdup (node_state_string_compact (0));
+	all_states = xstrdup (node_state_string(0));
 	for (i = 1; i < NODE_STATE_END; i++) {
 		xstrcat (all_states, ",");
 		xstrcat (all_states, node_state_string(i));
 	}
 
-	xstrcat(all_states, ",DRAIN,DRAINED,DRAINING,NO_RESPOND");
+	xstrcat(all_states,
+		",DRAIN,DRAINED,DRAINING,NO_RESPOND,RESERVED,PERFCTRS");
 	xstrcat(all_states, ",");
 	xstrcat(all_states, node_state_string(NODE_STATE_COMPLETING));
 	xstrcat(all_states, ",");
 	xstrcat(all_states, node_state_string(NODE_STATE_POWER_SAVE));
+	xstrcat(all_states, ",");
+	xstrcat(all_states, node_state_string(NODE_STATE_POWER_UP));
 	xstrcat(all_states, ",");
 	xstrcat(all_states, node_state_string(NODE_STATE_FAIL));
 	xstrcat(all_states, ",");
@@ -460,6 +531,12 @@ _node_state_id (char *str)
 		return NODE_STATE_DRAIN | NODE_STATE_IDLE;
 	if (strncasecmp("ERROR", str, len) == 0)
 		return NODE_STATE_ERROR;
+	if ((strncasecmp("RESV", str, len) == 0) ||
+	    (strncasecmp("RESERVED", str, len) == 0))
+		return NODE_STATE_RES;
+	if ((strncasecmp("PERFCTRS", str, len) == 0) ||
+	    (strncasecmp("NPC", str, len) == 0))
+		return NODE_STATE_NET;
 	if ((strncasecmp("DRAINING", str, len) == 0) ||
 	    (strncasecmp("DRNG", str, len) == 0))
 		return NODE_STATE_DRAIN | NODE_STATE_ALLOCATED;
@@ -469,6 +546,8 @@ _node_state_id (char *str)
 		return NODE_STATE_NO_RESPOND;
 	if (_node_state_equal (NODE_STATE_POWER_SAVE, str))
 		return NODE_STATE_POWER_SAVE;
+	if (_node_state_equal (NODE_STATE_POWER_UP, str))
+		return NODE_STATE_POWER_UP;
 	if (_node_state_equal (NODE_STATE_FAIL, str))
 		return NODE_STATE_FAIL;
 	if (_node_state_equal (NODE_STATE_MAINT, str))
@@ -525,7 +604,13 @@ _parse_format( char* format )
 			format_add_nodes_ai( params.format_list,
 					field_size,
 					right_justify,
-					     suffix );
+					suffix );
+		} else if (field[0] == 'b') {
+			params.match_flags.features_act_flag = true;
+			format_add_features_act( params.format_list,
+					field_size,
+					right_justify,
+					suffix );
 		} else if (field[0] == 'B') {
 			params.match_flags.max_cpus_per_node_flag = true;
 			format_add_max_cpus_per_node( params.format_list,
@@ -640,6 +725,12 @@ _parse_format( char* format )
 		} else if (field[0] == 'O') {
 			params.match_flags.cpu_load_flag = true;
 			format_add_cpu_load( params.format_list,
+					field_size,
+					right_justify,
+					suffix );
+		} else if (field[0] == 'e') {
+			params.match_flags.free_mem_flag = true;
+			format_add_free_mem( params.format_list,
 					field_size,
 					right_justify,
 					suffix );
@@ -759,6 +850,286 @@ _parse_format( char* format )
 	return SLURM_SUCCESS;
 }
 
+static int _parse_long_format (char* format_long)
+{
+	int field_size;
+	bool right_justify, format_all = false;
+	char *tmp_format = NULL, *token = NULL, *str_tmp = NULL;
+	char *sep = NULL;
+	char* suffix = NULL;
+
+	if (format_long == NULL) {
+		error("Format long option lacks specification");
+		exit( 1 );
+	}
+
+	params.format_list = list_create(NULL);
+	tmp_format = xstrdup(format_long);
+	token = strtok_r(tmp_format, ",",&str_tmp);
+
+	while (token) {
+		_parse_long_token( token, sep, &field_size, &right_justify,
+				   &suffix);
+
+		if (!strcasecmp(token, "all")) {
+			_parse_format ("%all");
+		} else if (!strcasecmp(token, "allocmem")) {
+			params.match_flags.alloc_mem_flag = true;
+			format_add_alloc_mem( params.format_list,
+						field_size,
+						right_justify,
+						suffix );
+		} else if (!strcasecmp(token, "allocnodes")) {
+			format_add_alloc_nodes( params.format_list,
+						field_size,
+						right_justify,
+						suffix );
+		} else if (!strcasecmp(token, "available")) {
+			params.match_flags.avail_flag = true;
+			format_add_avail( params.format_list,
+					  field_size,
+					  right_justify,
+					  suffix );
+		} else if (!strcasecmp(token, "cpus")) {
+			params.match_flags.cpus_flag = true;
+			format_add_cpus( params.format_list,
+					 field_size,
+					 right_justify,
+					 suffix );
+		} else if (!strcasecmp(token, "cpusload")) {
+			params.match_flags.cpu_load_flag = true;
+			format_add_cpu_load( params.format_list,
+					     field_size,
+					     right_justify,
+					     suffix );
+		} else if (!strcasecmp(token, "freemem")) {
+			params.match_flags.free_mem_flag = true;
+			format_add_free_mem( params.format_list,
+					     field_size,
+					     right_justify,
+					     suffix );
+		} else if (!strcasecmp(token, "cpusstate")) {
+			params.match_flags.cpus_flag = true;
+			format_add_cpus_aiot( params.format_list,
+					      field_size,
+					      right_justify,
+					      suffix );
+		} else if (!strcasecmp(token, "cores")) {
+			params.match_flags.cores_flag = true;
+			format_add_cores( params.format_list,
+					  field_size,
+					  right_justify,
+					  suffix );
+		} else if (!strcasecmp(token, "defaulttime")) {
+			params.match_flags.default_time_flag = true;
+			format_add_default_time( params.format_list,
+						 field_size,
+						 right_justify,
+						 suffix );
+		} else if (!strcasecmp(token, "disk")) {
+			params.match_flags.disk_flag = true;
+			format_add_disk( params.format_list,
+					 field_size,
+					 right_justify,
+					 suffix );
+		} else if (!strcasecmp(token, "features")) {
+			params.match_flags.features_flag = true;
+			format_add_features( params.format_list,
+					     field_size,
+					     right_justify,
+					     suffix );
+		} else if (!strcasecmp(token, "features_act")) {
+			params.match_flags.features_act_flag = true;
+			format_add_features_act( params.format_list,
+					field_size,
+					right_justify,
+					suffix );
+		} else if (!strcasecmp(token, "groups")) {
+			params.match_flags.groups_flag = true;
+			format_add_groups( params.format_list,
+					   field_size,
+					   right_justify,
+					   suffix );
+		} else if (!strcasecmp(token, "gres")) {
+			params.match_flags.gres_flag = true;
+			format_add_gres( params.format_list,
+					 field_size,
+					 right_justify,
+					 suffix );
+		} else if (!strcasecmp(token, "maxcpuspernode")) {
+			params.match_flags.max_cpus_per_node_flag = true;
+			format_add_max_cpus_per_node( params.format_list,
+						      field_size,
+						      right_justify,
+						      suffix );
+		} else if (!strcasecmp(token, "memory")) {
+			params.match_flags.memory_flag = true;
+			format_add_memory( params.format_list,
+					   field_size,
+					   right_justify,
+					   suffix );
+		} else if (!strcasecmp(token, "nodes")) {
+			format_add_nodes( params.format_list,
+					  field_size,
+					  right_justify,
+					  suffix );
+		} else if (!strcasecmp(token, "nodeaddr")) {
+			params.match_flags.node_addr_flag = true;
+			format_add_node_address( params.format_list,
+						 field_size,
+						 right_justify,
+						 suffix );
+		} else if (!strcasecmp(token, "nodeai")) {
+			format_add_nodes_ai( params.format_list,
+					     field_size,
+					     right_justify,
+					     suffix );
+		} else if (!strcasecmp(token, "nodeaiot")) {
+			format_add_nodes_aiot( params.format_list,
+					       field_size,
+					       right_justify,
+					       suffix );
+		} else if (!strcasecmp(token, "nodehost")) {
+			params.match_flags.hostnames_flag = true;
+			format_add_node_hostnames( params.format_list,
+						   field_size,
+						   right_justify,
+						   suffix );
+		} else if (!strcasecmp(token, "nodelist")) {
+			format_add_node_list( params.format_list,
+					      field_size,
+					      right_justify,
+					      suffix );
+		} else if (!strcasecmp(token, "partition")) {
+			params.match_flags.partition_flag = true;
+			format_add_partition( params.format_list,
+					      field_size,
+					      right_justify,
+					      suffix );
+		} else if (!strcasecmp(token, "partitionname")) {
+			params.match_flags.partition_flag = true;
+			format_add_partition_name( params.format_list,
+						   field_size,
+						   right_justify,
+						   suffix );
+		} else if (!strcasecmp(token, "preemptmode")) {
+			params.match_flags.preempt_mode_flag = true;
+			format_add_preempt_mode( params.format_list,
+						 field_size,
+						 right_justify,
+						 suffix );
+		} else if (!strcasecmp(token, "priority")) {
+			params.match_flags.priority_flag = true;
+			format_add_priority( params.format_list,
+					     field_size,
+					     right_justify,
+					     suffix );
+		} else if (!strcasecmp(token, "reason")) {
+			params.match_flags.reason_flag = true;
+			format_add_reason( params.format_list,
+					   field_size,
+					   right_justify,
+					   suffix );
+		} else if (!strcasecmp(token, "root")) {
+			params.match_flags.root_flag = true;
+			format_add_root( params.format_list,
+					 field_size,
+					 right_justify,
+					 suffix );
+		} else if (!strcasecmp(token, "share")) {
+			params.match_flags.share_flag = true;
+			format_add_share( params.format_list,
+					  field_size,
+					  right_justify,
+					  suffix );
+		} else if (!strcasecmp(token, "size")) {
+			params.match_flags.job_size_flag = true;
+			format_add_size( params.format_list,
+					 field_size,
+					 right_justify,
+					 suffix );
+		} else if (!strcasecmp(token, "statecompact")) {
+			params.match_flags.state_flag = true;
+			format_add_state_compact( params.format_list,
+						  field_size,
+						  right_justify,
+						  suffix );
+		} else if (!strcasecmp(token, "statelong")) {
+			params.match_flags.state_flag = true;
+			format_add_state_long( params.format_list,
+					       field_size,
+					       right_justify,
+					       suffix );
+		} else if (!strcasecmp(token, "sockets")) {
+			params.match_flags.sockets_flag = true;
+			format_add_sockets( params.format_list,
+					    field_size,
+					    right_justify,
+					    suffix );
+		} else if (!strcasecmp(token, "socketcorethread")) {
+			params.match_flags.sct_flag = true;
+			format_add_sct( params.format_list,
+					field_size,
+					right_justify,
+					suffix );
+		} else if (!strcasecmp(token, "time")) {
+			params.match_flags.max_time_flag = true;
+			format_add_time( params.format_list,
+					 field_size,
+					 right_justify,
+					 suffix );
+		} else if (!strcasecmp(token, "timestamp")) {
+			params.match_flags.reason_timestamp_flag = true;
+			format_add_timestamp( params.format_list,
+					      field_size,
+					      right_justify,
+					      suffix );
+		} else if (!strcasecmp(token, "threads")) {
+			params.match_flags.threads_flag = true;
+			format_add_threads( params.format_list,
+					    field_size,
+					    right_justify,
+					    suffix );
+		} else if (!strcasecmp(token, "user")) {
+			params.match_flags.reason_user_flag = true;
+			format_add_user( params.format_list,
+					 field_size,
+					 right_justify,
+					 suffix );
+		} else if (!strcasecmp(token, "userlong")) {
+			params.match_flags.reason_user_flag = true;
+			format_add_user_long( params.format_list,
+					      field_size,
+					      right_justify,
+					      suffix );
+		} else if (!strcasecmp(token, "version")) {
+			params.match_flags.version_flag = true;
+			format_add_version( params.format_list,
+					    field_size,
+					    right_justify,
+					    suffix);
+		} else if (!strcasecmp(token, "weight")) {
+			params.match_flags.weight_flag = true;
+			format_add_weight( params.format_list,
+					   field_size,
+					   right_justify,
+					   suffix );
+		} else if (format_all) {
+			/* ignore */
+		} else {
+			format_add_invalid( params.format_list,
+					    field_size,
+					    right_justify,
+					    suffix );
+			error( "Invalid job format specification: %s",
+			       token );
+		}
+		token = strtok_r(NULL, ",", &str_tmp);
+	}
+	xfree(tmp_format);
+	return SLURM_SUCCESS;
+}
+
 /* Take a format specification and copy out it's prefix
  * IN/OUT token - input specification, everything before "%" is removed
  * RET - everything before "%" in the token
@@ -789,7 +1160,7 @@ _get_prefix( char *token )
  * OUT field - the letter code for the data type
  * OUT field_size - byte count
  * OUT right_justify - true of field to be right justified
- * OUT suffix - tring containing everthing after the field specification
+ * OUT suffix - string containing everthing after the field specification
  */
 static void
 _parse_token( char *token, char *field, int *field_size, bool *right_justify,
@@ -812,6 +1183,29 @@ _parse_token( char *token, char *field, int *field_size, bool *right_justify,
 	field[0] = token[i++];
 
 	*suffix = xstrdup(&token[i]);
+}
+
+static void
+_parse_long_token( char *token, char *sep, int *field_size, bool *right_justify,
+		   char **suffix)
+{
+	char *ptr;
+
+	xassert(token);
+	ptr = strchr(token, ':');
+	if (ptr) {
+		ptr[0] = '\0';
+		if (ptr[1] == '.') {
+			*right_justify = true;
+			ptr++;
+		} else {
+			*right_justify = false;
+		}
+		*field_size = atoi(ptr + 1);
+	} else {
+		*right_justify = false;
+		*field_size = 20;
+	}
 }
 
 /* print the parameters specified */
@@ -841,6 +1235,8 @@ void _print_options( void )
 	printf("verbose     = %d\n", params.verbose);
 	printf("-----------------------------\n");
 	printf("all_flag        = %s\n", params.all_flag ? "true" : "false");
+	printf("alloc_mem_flag  = %s\n", params.match_flags.alloc_mem_flag ?
+			"true" : "false");
 	printf("avail_flag      = %s\n", params.match_flags.avail_flag ?
 			"true" : "false");
 	printf("bg_flag         = %s\n", params.bg_flag ? "true" : "false");
@@ -851,6 +1247,8 @@ void _print_options( void )
 	printf("disk_flag       = %s\n", params.match_flags.disk_flag ?
 			"true" : "false");
 	printf("features_flag   = %s\n", params.match_flags.features_flag ?
+			"true" : "false");
+	printf("features_flag_act = %s\n", params.match_flags.features_act_flag?
 			"true" : "false");
 	printf("groups_flag     = %s\n", params.match_flags.groups_flag ?
 					"true" : "false");
@@ -889,7 +1287,7 @@ static void _usage( void )
 {
 	printf("\
 Usage: sinfo [-abdelNRrsTv] [-i seconds] [-t states] [-p partition] [-n nodes]\n\
-             [-S fields] [-o format] \n");
+             [-S fields] [-o format] [-O Format]\n");
 }
 
 static void _help( void )
@@ -897,7 +1295,7 @@ static void _help( void )
 	printf ("\
 Usage: sinfo [OPTIONS]\n\
   -a, --all                  show all partitions (including hidden and those\n\
-                             not accessible)\n\
+			     not accessible)\n\
   -b, --bg                   show bgblocks (on Blue Gene systems)\n\
   -d, --dead                 show only non-responding nodes\n\
   -e, --exact                group nodes only on exact match of configuration\n\
@@ -906,8 +1304,11 @@ Usage: sinfo [OPTIONS]\n\
   -i, --iterate=seconds      specify an iteration period\n\
   -l, --long                 long output - displays more information\n\
   -n, --nodes=NODES          report on specific node(s)\n\
+  --noconvert                don't convert units from their original type\n\
+			     (e.g. 2048M won't be converted to 2G).\n\
   -N, --Node                 Node-centric format\n\
   -o, --format=format        format specification\n\
+  -O, --Format=format        long format specification\n\
   -p, --partition=PARTITION  report on specific partition\n\
   -r, --responding           report only responding nodes\n\
   -R, --list-reasons         list reason nodes are down or drained\n\

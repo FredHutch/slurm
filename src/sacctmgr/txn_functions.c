@@ -185,22 +185,23 @@ extern int sacctmgr_list_txn(int argc, char *argv[])
 
 	if (exit_code) {
 		slurmdb_destroy_txn_cond(txn_cond);
-		list_destroy(format_list);
+		FREE_NULL_LIST(format_list);
 		return SLURM_ERROR;
 	}
 
 	if (!list_count(format_list)) {
-		slurm_addto_char_list(format_list, "T,Action,Actor,Where,Info");
+		slurm_addto_char_list(format_list,
+				      "Time,Action,Actor,Where,Info");
 		if (txn_cond->with_assoc_info)
 			slurm_addto_char_list(format_list,
 					      "User,Account,Cluster");
 	}
 
 	print_fields_list = sacctmgr_process_format_list(format_list);
-	list_destroy(format_list);
+	FREE_NULL_LIST(format_list);
 
 	if (exit_code) {
-		list_destroy(print_fields_list);
+		FREE_NULL_LIST(print_fields_list);
 		return SLURM_ERROR;
 	}
 
@@ -211,7 +212,7 @@ extern int sacctmgr_list_txn(int argc, char *argv[])
 		exit_code=1;
 		fprintf(stderr, " Error with request: %s\n",
 			slurm_strerror(errno));
-		list_destroy(print_fields_list);
+		FREE_NULL_LIST(print_fields_list);
 		return SLURM_ERROR;
 	}
 	itr = list_iterator_create(txn_list);
@@ -287,7 +288,7 @@ extern int sacctmgr_list_txn(int argc, char *argv[])
 
 	list_iterator_destroy(itr2);
 	list_iterator_destroy(itr);
-	list_destroy(txn_list);
-	list_destroy(print_fields_list);
+	FREE_NULL_LIST(txn_list);
+	FREE_NULL_LIST(print_fields_list);
 	return rc;
 }

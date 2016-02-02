@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          sacctmgr modify accounts, descriptions, limits,
@@ -35,15 +35,12 @@ source ./globals_accounting
 
 set test_id     "21.14"
 set exit_code   0
-set tc1		slurm_test-cluster-1
-set tc2		slurm_test-cluster-2
-set ta1		slurm_test-account.1
-set ta2		slurm_test-account.2
-set ta3		slurm_test-account.3
+set tc1		"test$test_id-cluster-1"
+set tc2		"test$test_id-cluster-2"
+set ta1		"test$test_id-account.1"
+set ta2		"test$test_id-account.2"
+set ta3		"test$test_id-account.3"
 set access_err  0
-
-########## Cluster ##########
-array set clus_req {}
 
 ########## Account ##########
 array set acct_req {}
@@ -118,7 +115,7 @@ if { [test_account_storage] == 0 } {
 }
 
 if { [string compare [check_accounting_admin_level] "Administrator"] } {
-	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\nUse sacctmgr mod user \$USER_NAME admin=admin.\n"
+	send_user "\nWARNING: This test can't be run without being an Accounting administrator.\nUse: sacctmgr mod user \$USER set admin=admin.\n"
 	exit 0
 }
 
@@ -131,7 +128,7 @@ if {$access_err != 0} {
 remove_acct "" "$ta1,$ta2,$ta3"
 
 #add cluster
-incr exit_code [add_cluster "$tc1,$tc2" [array get clus_req]]
+incr exit_code [add_cluster "$tc1,$tc2" ""]
 if { $exit_code } {
 	remove_acct "" "$ta1,$ta2,$ta3"
 	remove_cluster "$tc1,$tc2"
@@ -276,12 +273,10 @@ expect {
 	    	incr exit_code 1
 	}
 	-re "$ta3.$ta2.$tc1.1.$acct_mod_assoc_vals2(maxcpumins).$acct_mod_assoc_vals2(maxjobs).$acct_mod_assoc_vals2(maxnodes).$acct_mod_assoc_vals2(maxwall)." {
-		send_user "hey\n"
 		incr matches
 		exp_continue
 	}
 	-re "$ta3.root.$tc2.1....." {
-		send_user "hey 2\n"
 		incr matches
 		exp_continue
 	}

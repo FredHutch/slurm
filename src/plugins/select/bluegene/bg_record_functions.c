@@ -98,20 +98,12 @@ extern void destroy_bg_record(void *object)
 
 	if (bg_record) {
 		bg_record->magic = 0;
-		if (bg_record->ba_mp_list) {
-			list_destroy(bg_record->ba_mp_list);
-			bg_record->ba_mp_list = NULL;
-		}
+		FREE_NULL_LIST(bg_record->ba_mp_list);
 		xfree(bg_record->bg_block_id);
 		xfree(bg_record->blrtsimage);
 		xfree(bg_record->ionode_str);
 		FREE_NULL_BITMAP(bg_record->ionode_bitmap);
-
-		if (bg_record->job_list) {
-			list_destroy(bg_record->job_list);
-			bg_record->job_list = NULL;
-		}
-
+		FREE_NULL_LIST(bg_record->job_list);
 		xfree(bg_record->linuximage);
 		xfree(bg_record->mloaderimage);
 		xfree(bg_record->mp_str);
@@ -272,7 +264,7 @@ extern void process_nodes(bg_record_t *bg_record, bool startup)
 			break;
 	}
 	if (dim < SYSTEM_DIMENSIONS) {
-		/* means we have more than 1 base partition */
+		/* means we have more than 1 midplane */
 		for (dim = 0; dim < SYSTEM_DIMENSIONS; dim++) {
 			if (bg_record->geo[dim] != cluster_dims[dim])
 				break;
@@ -336,8 +328,7 @@ extern void copy_bg_record(bg_record_t *fir_record, bg_record_t *sec_record)
 	sec_record->action = fir_record->action;
 	sec_record->bg_block_id = xstrdup(fir_record->bg_block_id);
 
-	if (sec_record->ba_mp_list)
-		list_destroy(sec_record->ba_mp_list);
+	FREE_NULL_LIST(sec_record->ba_mp_list);
 	sec_record->ba_mp_list = list_create(destroy_ba_mp);
 	if (fir_record->ba_mp_list) {
 		itr = list_iterator_create(fir_record->ba_mp_list);
@@ -400,10 +391,7 @@ extern void copy_bg_record(bg_record_t *fir_record, bg_record_t *sec_record)
 		sec_record->ionode_bitmap = NULL;
 	}
 
-	if (sec_record->job_list) {
-		list_destroy(sec_record->job_list);
-		sec_record->job_list = NULL;
-	}
+	FREE_NULL_LIST(sec_record->job_list);
 
 	if (fir_record->job_list) {
 		struct job_record *job_ptr;
@@ -505,7 +493,8 @@ extern int bg_record_cmpf_inc(void *r1, void *r2)
 
 /*
  * Comparator used for sorting blocks from earliest available to lastest
- *
+ * This will return the fullest shared midplane blocks first
+ * regardless if it is the completely available sooner or not.
  * returns: -1: rec_a < rec_b   0: rec_a == rec_b   1: rec_a > rec_b
  *
  */
@@ -550,6 +539,69 @@ extern int bg_record_sort_aval_inc(void *r1, void *r2)
 		return 1;
 	else if (rec_a->avail_job_end < rec_b->avail_job_end)
 		return -1;
+
+	/* if (!job_ptr_a && job_ptr_b) */
+	/* 	return -1; */
+	/* else if (job_ptr_a && !job_ptr_b) */
+	/* 	return 1; */
+	/* else if (job_ptr_a && job_ptr_b) { */
+	/* 	if (job_ptr_a->end_time > job_ptr_b->end_time) */
+	/* 		return 1; */
+	/* 	else if (job_ptr_a->end_time < job_ptr_b->end_time) */
+	/* 		return -1; */
+	/* } */
+
+	return bg_record_cmpf_inc(&rec_a, &rec_b);
+}
+
+/*
+ * Comparator used for sorting blocks from earliest available to lastest
+ * based primarily when the last job is available.
+ * returns: -1: rec_a < rec_b   0: rec_a == rec_b   1: rec_a > rec_b
+ *
+ */
+extern int bg_record_sort_aval_time_inc(void *r1, void *r2)
+{
+	bg_record_t* rec_a = *(bg_record_t **)r1;
+	bg_record_t* rec_b = *(bg_record_t **)r2;
+
+	if ((rec_a->job_running == BLOCK_ERROR_STATE)
+	    && (rec_b->job_running != BLOCK_ERROR_STATE))
+		return 1;
+	else if ((rec_a->job_running != BLOCK_ERROR_STATE)
+		 && (rec_b->job_running == BLOCK_ERROR_STATE))
+		return -1;
+
+	if (!rec_a->avail_set)
+		_set_block_avail(rec_a);
+
+	if (!rec_b->avail_set)
+		_set_block_avail(rec_b);
+
+	/* Don't use this check below.  It will mess up preemption by
+	   sending this smaller block to the back of the list just
+	   because it is fully used.
+	*/
+	/* if (!rec_a->avail_cnode_cnt && rec_b->avail_cnode_cnt) */
+	/* 	return 1; */
+	/* else if (rec_a->avail_cnode_cnt && !rec_b->avail_cnode_cnt) */
+	/* 	return -1; */
+
+
+	if (rec_a->avail_job_end > rec_b->avail_job_end)
+		return 1;
+	else if (rec_a->avail_job_end < rec_b->avail_job_end)
+		return -1;
+
+	if (rec_a->job_list && rec_b->job_list) {
+		/* we only want to use this sort on 1 midplane blocks
+		   that are used for sharing
+		*/
+		if (rec_a->avail_cnode_cnt > rec_b->avail_cnode_cnt)
+			return 1;
+		else if (rec_a->avail_cnode_cnt < rec_b->avail_cnode_cnt)
+			return -1;
+	}
 
 	/* if (!job_ptr_a && job_ptr_b) */
 	/* 	return -1; */
@@ -643,7 +695,7 @@ extern void requeue_and_error(bg_record_t *bg_record, char *reason)
 
 	if (kill_job_list) {
 		bg_status_process_kill_job_list(kill_job_list, JOB_FAILED, 0);
-		list_destroy(kill_job_list);
+		FREE_NULL_LIST(kill_job_list);
 	}
 
 	if (rc)
@@ -787,8 +839,7 @@ extern int add_bg_record(List records, List *used_nodes,
 			debug4("add_bg_record: "
 			       "we didn't get a request list so we are "
 			       "destroying this mp list");
-			list_destroy(bg_record->ba_mp_list);
-			bg_record->ba_mp_list = NULL;
+			FREE_NULL_LIST(bg_record->ba_mp_list);
 		} else
 			setup_subblock_structs(bg_record);
 	} else {
@@ -848,7 +899,7 @@ extern int add_bg_record(List records, List *used_nodes,
 			      "There is an error in your bluegene.conf file.\n"
 			      "I am unable to request %d nodes consisting of "
 			      "%u 32CnBlocks and\n%u 128CnBlocks in one "
-			      "base partition with %u nodes.",
+			      "midplane with %u nodes.",
 			      i, blockreq->small32, blockreq->small128,
 			      bg_conf->mp_cnode_cnt);
 #else
@@ -873,7 +924,7 @@ extern int add_bg_record(List records, List *used_nodes,
 			      "%u 16CNBlocks, %u 32CNBlocks,\n"
 			      "%u 64CNBlocks, %u 128CNBlocks, "
 			      "and %u 256CNBlocks\n"
-			      "in one base partition with %u nodes.",
+			      "in one midplane with %u nodes.",
 			      i, blockreq->small16, blockreq->small32,
 			      blockreq->small64, blockreq->small128,
 			      blockreq->small256, bg_conf->mp_cnode_cnt);
@@ -900,7 +951,7 @@ extern int add_bg_record(List records, List *used_nodes,
 		}
 		list_iterator_destroy(itr);
 		destroy_bg_record(bg_record);
-		list_destroy(ba_mp_list);
+		FREE_NULL_LIST(ba_mp_list);
 	}
 
 	return SLURM_SUCCESS;
@@ -1163,10 +1214,7 @@ extern int down_nodecard(char *mp_name, bitoff_t io_start,
 	if (bg_conf->layout_mode != LAYOUT_DYNAMIC) {
 		debug3("running non-dynamic mode");
 		/* This should never happen, but just in case... */
-		if (delete_list) {
-			list_destroy(delete_list);
-			delete_list = NULL;
-		}
+		FREE_NULL_LIST(delete_list);
 		/* If we found a block that is smaller or equal to a
 		   midplane we will just mark it in an error state as
 		   opposed to draining the node.
@@ -1210,8 +1258,7 @@ extern int down_nodecard(char *mp_name, bitoff_t io_start,
 			cnt_set++;
 		}
 		list_iterator_destroy(itr);
-		list_destroy(delete_list);
-		delete_list = NULL;
+		FREE_NULL_LIST(delete_list);
 
 		if (!cnt_set) {
 			FREE_NULL_BITMAP(iobitmap);
@@ -1410,7 +1457,7 @@ extern int down_nodecard(char *mp_name, bitoff_t io_start,
 			error_bg_record = bg_record;
 		}
 	}
-	list_destroy(requests);
+	FREE_NULL_LIST(requests);
 
 	sort_bg_record_inc_size(bg_lists->main);
 	last_bg_update = time(NULL);
@@ -1419,7 +1466,7 @@ extern int down_nodecard(char *mp_name, bitoff_t io_start,
 cleanup:
 	if (kill_list) {
 		bg_status_process_kill_job_list(kill_list, JOB_NODE_FAIL, 1);
-		list_destroy(kill_list);
+		FREE_NULL_LIST(kill_list);
 	}
 
 	if (!slurmctld_locked)
@@ -1447,8 +1494,7 @@ cleanup:
 		if (bg_conf->layout_mode == LAYOUT_DYNAMIC)
 			delete_it = 1;
 		free_block_list(NO_VAL, delete_list, delete_it, 0);
-		list_destroy(delete_list);
-		delete_list = NULL;
+		FREE_NULL_LIST(delete_list);
 	}
 
 	return rc;
@@ -1780,10 +1826,7 @@ extern void bg_record_hw_failure(bg_record_t *bg_record, List *ret_kill_list)
 			*/
 			if (!bit_test(bg_conf->reboot_qos_bitmap,
 				      qos_ptr->id)) {
-				if (kill_list) {
-					list_destroy(kill_list);
-					kill_list = NULL;
-				}
+				FREE_NULL_LIST(kill_list);
 				break;
 			}
 			if (!kill_list)
@@ -1798,7 +1841,7 @@ extern void bg_record_hw_failure(bg_record_t *bg_record, List *ret_kill_list)
 			*ret_kill_list = kill_list;
 		} else {
 			list_transfer(*ret_kill_list, kill_list);
-			list_destroy(kill_list);
+			FREE_NULL_LIST(kill_list);
 		}
 		kill_list = NULL;
 	}
@@ -1846,7 +1889,7 @@ extern void bg_record_post_hw_failure(
 			       JOB_NODE_FAIL, 1);
 	}
 	list_iterator_destroy(itr);
-	list_destroy(*kill_list);
+	FREE_NULL_LIST(*kill_list);
 	*kill_list = NULL;
 	if (!slurmctld_locked)
 		unlock_slurmctld(job_write_lock);

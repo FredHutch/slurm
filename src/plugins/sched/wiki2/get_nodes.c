@@ -99,7 +99,7 @@ extern int	get_nodes(char *cmd_ptr, int *err_code, char **err_msg)
 	 * This relies on the above write lock for the node state.
 	 */
 	lock_slurmctld(node_write_lock);
-	if (select_g_reconfigure()) {
+	if (select_g_update_block(NULL)) {
 		unlock_slurmctld(node_write_lock);
 		*err_code = -720;
 		*err_msg = "Unable to run ALPS inventory";
@@ -243,8 +243,8 @@ static char *	_dump_all_nodes(int *node_cnt, time_t update_time)
  * RET 0 of node1 is NULL or their parameters are the same
  *     >0 otherwise
  */
-static int	_same_info(struct node_record *node1_ptr,
-			   struct node_record *node2_ptr, time_t update_time)
+static int _same_info(struct node_record *node1_ptr,
+		      struct node_record *node2_ptr, time_t update_time)
 {
 	int i;
 

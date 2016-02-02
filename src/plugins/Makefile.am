@@ -5,6 +5,7 @@ SUBDIRS = \
 	acct_gather_infiniband  \
 	acct_gather_filesystem  \
 	auth			\
+	burst_buffer		\
 	checkpoint		\
 	core_spec		\
 	crypto			\
@@ -14,15 +15,19 @@ SUBDIRS = \
 	jobcomp			\
 	job_container		\
 	job_submit		\
+	knl			\
 	launch			\
+	mcs			\
 	mpi			\
+	power			\
 	preempt			\
 	priority		\
 	proctrack		\
+	route			\
 	sched			\
 	select			\
 	slurmctld		\
-	slurmd		\
+	slurmd			\
 	switch			\
 	task			\
 	topology

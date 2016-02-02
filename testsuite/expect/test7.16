@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Verify that auth/munge credential is properly validated.
@@ -90,7 +90,8 @@ expect {
 	}
 }
 if {$job_id != 0} {
-	send_user "\FAILURE: allocation granted with bad Munge credential\n"
+	send_user "\nFAILURE: allocation granted with bad Munge credential\n"
+	send_user "FAILURE: This happens rarely, when the Slurm test modifies a byte that Munge does not use\n"
 	exit 1
 }
 

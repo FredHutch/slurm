@@ -47,6 +47,7 @@
 #include <math.h>
 #include "block_allocator.h"
 #include "src/common/slurmdb_defs.h"
+#include "src/common/strlcpy.h"
 #include "src/common/timers.h"
 #include "src/common/uid.h"
 
@@ -987,10 +988,10 @@ extern char *set_bg_block(List results, select_ba_request_t* ba_request)
 					     start_list,
 					     ba_request->geometry,
 					     ba_request->conn_type[0])) {
-				list_destroy(start_list);
+				FREE_NULL_LIST(start_list);
 				goto end_it;
 			}
-			list_destroy(start_list);
+			FREE_NULL_LIST(start_list);
 		}
 	} else {
 		goto end_it;
@@ -1001,8 +1002,7 @@ extern char *set_bg_block(List results, select_ba_request_t* ba_request)
 				   ba_request->conn_type[0]);
 end_it:
 	if (!send_results && results) {
-		list_destroy(results);
-		results = NULL;
+		FREE_NULL_LIST(results);
 	}
 	if (name!=NULL) {
 		debug2("name = %s", name);
@@ -1800,14 +1800,8 @@ extern void ba_destroy_system(void)
 {
 	int x, y;
 
-	if (path) {
-		list_destroy(path);
-		path = NULL;
-	}
-	if (best_path) {
-		list_destroy(best_path);
-		best_path = NULL;
-	}
+	FREE_NULL_LIST(path);
+	FREE_NULL_LIST(best_path);
 
 #ifdef HAVE_BG_FILES
 	if (bg)
@@ -1871,6 +1865,11 @@ extern void ba_sync_job_to_block(bg_record_t *bg_record,
 
 
 extern bitstr_t *ba_create_ba_mp_cnode_bitmap(bg_record_t *bg_record)
+{
+	return NULL;
+}
+
+extern bitstr_t *ba_cnodelist2bitmap(char *cnodelist)
 {
 	return NULL;
 }
@@ -2182,10 +2181,8 @@ static int _set_external_wires(int dim, int count, ba_mp_t* source,
 			continue;
 		}
 
-                memset(&from_node, 0, sizeof(from_node));
-                memset(&to_node, 0, sizeof(to_node));
-                strncpy(from_node, wire_id+2, NODE_LEN-1);
-                strncpy(to_node, wire_id+UNDER_POS+1, NODE_LEN-1);
+                strlcpy(from_node, wire_id+2, NODE_LEN);
+                strlcpy(to_node, wire_id+UNDER_POS+1, NODE_LEN);
 		free(wire_id);
 
 		if ((rc = bridge_get_data(my_wire, RM_WireFromPort, &my_port))

@@ -1,6 +1,5 @@
 /*****************************************************************************\
  *  slurm_resource_info.c - Functions to determine number of available resources
- *  $Id: slurm_resource_info.c,v 1.12 2006/10/04 21:52:24 palermo Exp $
  *****************************************************************************
  *  Copyright (C) 2006 Hewlett-Packard Development Company, L.P.
  *  Written by Susanne M. Balle, <susanne.balle@hp.com>
@@ -144,6 +143,13 @@ void slurm_sprint_cpu_bind_type(char *str, cpu_bind_type_t cpu_bind_type)
 	if (cpu_bind_type & CPU_BIND_ONE_THREAD_PER_CORE)
 		strcat(str, "one_thread,");
 
+	if (cpu_bind_type & CPU_AUTO_BIND_TO_THREADS)
+		strcat(str, "autobind=threads,");
+	if (cpu_bind_type & CPU_AUTO_BIND_TO_CORES)
+		strcat(str, "autobind=cores,");
+	if (cpu_bind_type & CPU_AUTO_BIND_TO_SOCKETS)
+		strcat(str, "autobind=sockets,");
+
 	if (*str) {
 		str[strlen(str)-1] = '\0';	/* remove trailing ',' */
 	} else {
@@ -241,7 +247,7 @@ int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
 		CPU_BIND_NONE|CPU_BIND_RANK|CPU_BIND_MAP|CPU_BIND_MASK;
 	int bind_to_bits =
 		CPU_BIND_TO_SOCKETS|CPU_BIND_TO_CORES|CPU_BIND_TO_THREADS;
-	uint16_t task_plugin_param = slurm_get_task_plugin_param();
+	uint32_t task_plugin_param = slurm_get_task_plugin_param();
 	bool have_binding = _have_task_affinity();
 	bool log_binding = true;
 
@@ -303,6 +309,8 @@ int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
 		} else if ((strcasecmp(tok, "v") == 0) ||
 			   (strcasecmp(tok, "verbose") == 0)) {
 		        *flags |= CPU_BIND_VERBOSE;
+		} else if ((strcasecmp(tok, "one_thread") == 0)) {
+		        *flags |= CPU_BIND_ONE_THREAD_PER_CORE;
 		} else if ((strcasecmp(tok, "no") == 0) ||
 			   (strcasecmp(tok, "none") == 0)) {
 			_clear_then_set((int *)flags, bind_bits, CPU_BIND_NONE);
@@ -313,7 +321,7 @@ int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
 		} else if ((strncasecmp(tok, "map_cpu", 7) == 0) ||
 		           (strncasecmp(tok, "mapcpu", 6) == 0)) {
 			char *list;
-			list = strsep(&tok, ":=");
+			(void) strsep(&tok, ":=");
 			list = strsep(&tok, ":=");  /* THIS IS NOT REDUNDANT */
 			_clear_then_set((int *)flags, bind_bits, CPU_BIND_MAP);
 			xfree(*cpu_bind);
@@ -328,7 +336,7 @@ int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
 		} else if ((strncasecmp(tok, "mask_cpu", 8) == 0) ||
 		           (strncasecmp(tok, "maskcpu", 7) == 0)) {
 			char *list;
-			list = strsep(&tok, ":=");
+			(void) strsep(&tok, ":=");
 			list = strsep(&tok, ":=");  /* THIS IS NOT REDUNDANT */
 			_clear_then_set((int *)flags, bind_bits, CPU_BIND_MASK);
 			xfree(*cpu_bind);
@@ -347,7 +355,7 @@ int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
 		} else if ((strncasecmp(tok, "map_ldom", 8) == 0) ||
 		           (strncasecmp(tok, "mapldom", 7) == 0)) {
 			char *list;
-			list = strsep(&tok, ":=");
+			(void) strsep(&tok, ":=");
 			list = strsep(&tok, ":=");  /* THIS IS NOT REDUNDANT */
 			_clear_then_set((int *)flags, bind_bits,
 					CPU_BIND_LDMAP);
@@ -363,7 +371,7 @@ int slurm_verify_cpu_bind(const char *arg, char **cpu_bind,
 		} else if ((strncasecmp(tok, "mask_ldom", 9) == 0) ||
 		           (strncasecmp(tok, "maskldom", 8) == 0)) {
 			char *list;
-			list = strsep(&tok, ":=");
+			(void) strsep(&tok, ":=");
 			list = strsep(&tok, ":=");  /* THIS IS NOT REDUNDANT */
 			_clear_then_set((int *)flags, bind_bits,
 					CPU_BIND_LDMASK);
@@ -527,7 +535,7 @@ int slurm_verify_mem_bind(const char *arg, char **mem_bind,
 		} else if ((strncasecmp(tok, "map_mem", 7) == 0) ||
 		           (strncasecmp(tok, "mapmem", 6) == 0)) {
 			char *list;
-			list = strsep(&tok, ":=");
+			(void) strsep(&tok, ":=");
 			list = strsep(&tok, ":=");  /* THIS IS NOT REDUNDANT */
 			_clear_then_set((int *)flags, bind_bits, MEM_BIND_MAP);
 			xfree(*mem_bind);
@@ -541,7 +549,7 @@ int slurm_verify_mem_bind(const char *arg, char **mem_bind,
 		} else if ((strncasecmp(tok, "mask_mem", 8) == 0) ||
 		           (strncasecmp(tok, "maskmem", 7) == 0)) {
 			char *list;
-			list = strsep(&tok, ":=");
+			(void) strsep(&tok, ":=");
 			list = strsep(&tok, ":=");  /* THIS IS NOT REDUNDANT */
 			_clear_then_set((int *)flags, bind_bits, MEM_BIND_MASK);
 			xfree(*mem_bind);

@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Confirm that srun help option works (--help option).
@@ -43,7 +43,7 @@ print_header $test_id
 #
 set srun_pid [spawn $srun --help]
 expect {
-	-re "srun .* executable" {
+	-re "Usage:" {
 		incr matches
 		exp_continue
 	}

@@ -41,6 +41,7 @@
 #define _NET_H
 
 #include <stdint.h>
+#include <sys/socket.h>
 
 #include "src/common/macros.h"
 
@@ -51,17 +52,19 @@
  * OUT fd - listening socket file descriptor number
  * OUT port - TCP port number in host byte order
  */
-int net_stream_listen(int *fd, short *port);
+extern int net_stream_listen(int *fd, uint16_t *port);
 
 /* accept the incoming connection on the stream socket fd
  */
-int net_accept_stream(int fd);
+extern int net_accept_stream(int fd);
 
 /* set low water mark on socket
  */
-int net_set_low_water(int sock, size_t size);
+extern int net_set_low_water(int sock, socklen_t size);
 
 /* set keep alive time on socket */
 extern int net_set_keep_alive(int sock);
+
+extern int net_stream_listen_ports(int *, uint16_t *, uint16_t *);
 
 #endif /* !_NET_H */

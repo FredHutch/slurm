@@ -47,14 +47,8 @@
 #  include <inttypes.h>
 #endif
 
-#if defined(__NetBSD__)
-#include <sys/types.h> /* for pid_t */
-#include <sys/signal.h> /* for SIGKILL */
-#endif
-#if defined(__FreeBSD__)
-#include <signal.h>	/* SIGKILL */
-#endif
 #include <sys/types.h>
+#include <signal.h>	/* SIGKILL */
 
 #include "slurm/slurm.h"
 #include "slurm/slurm_errno.h"
@@ -84,16 +78,12 @@
  * only load job completion logging plugins if the plugin_type string has a
  * prefix of "jobcomp/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the job completion logging API
- * matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]      = "Process tracking via linux /proc";
 const char plugin_type[]      = "proctrack/linuxproc";
-const uint32_t plugin_version = 91;
+const uint32_t plugin_version = SLURM_VERSION_NUMBER;
 
 
 /*
@@ -153,25 +143,12 @@ extern bool proctrack_p_has_pid(uint64_t cont_id, pid_t pid)
 extern int
 proctrack_p_wait(uint64_t cont_id)
 {
-	int delay = 1;
-
 	if (cont_id == 0 || cont_id == 1) {
 		errno = EINVAL;
 		return SLURM_ERROR;
 	}
 
-	/* Spin until the container is successfully destroyed */
-	while (proctrack_p_destroy(cont_id) != SLURM_SUCCESS) {
-		proctrack_p_signal(cont_id, SIGKILL);
-		sleep(delay);
-		if (delay < 120) {
-			delay *= 2;
-		} else {
-			error("Unable to destroy container %"PRIu64"", cont_id);
-		}
-	}
-
-	return SLURM_SUCCESS;
+	return proctrack_p_destroy(cont_id);
 }
 
 extern int

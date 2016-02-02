@@ -17,7 +17,7 @@ AC_DEFUN([X_AC_RRDTOOL],
   AC_ARG_WITH([rrdtool],
     AS_HELP_STRING(--with-rrdtool=PATH,
       Specify path to rrdtool-devel installation),
-    [_x_ac_rrdtool_dirs="$withval $_x_ac_rrdtool_dirs"],
+    [_x_ac_rrdtool_dirs="$withval"],
     [with_rrdtool=check])
 
 #  echo with rrdtool $with_rrdtool
@@ -55,7 +55,11 @@ AC_DEFUN([X_AC_RRDTOOL],
     AC_MSG_WARN([unable to locate rrdtool installation])
   else
     RRDTOOL_CPPFLAGS="-I$x_ac_cv_rrdtool_dir/include"
-    RRDTOOL_LDFLAGS="-Wl,-rpath -Wl,$x_ac_cv_rrdtool_dir/$bit -L$x_ac_cv_rrdtool_dir/$bit"
+    if test "$ac_with_rpath" = "yes"; then
+      RRDTOOL_LDFLAGS="-Wl,-rpath -Wl,$x_ac_cv_rrdtool_dir/$bit -L$x_ac_cv_rrdtool_dir/$bit"
+    else
+      RRDTOOL_LDFLAGS="-L$x_ac_cv_rrdtool_dir/$bit"
+    fi
     RRDTOOL_LIBS="-lrrd"
   fi
 

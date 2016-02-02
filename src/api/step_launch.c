@@ -64,20 +64,22 @@
 
 #include "slurm/slurm.h"
 
+#include "src/common/cpu_frequency.h"
+#include "src/common/eio.h"
+#include "src/common/fd.h"
+#include "src/common/forward.h"
 #include "src/common/hostlist.h"
+#include "src/common/net.h"
+#include "src/common/plugstack.h"
+#include "src/common/slurm_auth.h"
+#include "src/common/slurm_cred.h"
+#include "src/common/slurm_mpi.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/slurm_protocol_defs.h"
+#include "src/common/slurm_time.h"
+#include "src/common/uid.h"
 #include "src/common/xmalloc.h"
 #include "src/common/xstring.h"
-#include "src/common/eio.h"
-#include "src/common/net.h"
-#include "src/common/fd.h"
-#include "src/common/slurm_auth.h"
-#include "src/common/forward.h"
-#include "src/common/plugstack.h"
-#include "src/common/slurm_cred.h"
-#include "src/common/mpi.h"
-#include "src/common/uid.h"
 
 #include "src/api/step_launch.h"
 #include "src/api/step_ctx.h"
@@ -104,13 +106,30 @@ static pid_t  srun_ppid = (pid_t) 0;
 static uid_t  slurm_uid;
 static bool   force_terminated_job = false;
 static int    task_exit_signal = 0;
+#ifdef HAVE_NATIVE_CRAY
+/* On a Cray we need to validate the gid
+ * before the launch of the tasks.  Since a native
+ * Cray really isn't a cluster but a distributed system this should
+ * be ok.
+ * This could be hacked by a user, but the only damage they
+ * could really do is set SLURM_USER_NAME to be something
+ * other than the actual name.  Running any getpwXXX commands
+ * on a cray compute node is not scalable and could
+ * potentially cause all sorts of issues and timeouts when
+ * talking with LDAP or NIS when done on the compute node.  We
+ * have not seen this issue on a regular cluster, so we do
+ * the validating there instead when not on a Cray.
+ */
+static bool   validate_gid = true;
+#else
+static bool   validate_gid = false;
+#endif
 static void _exec_prog(slurm_msg_t *msg);
 static int  _msg_thr_create(struct step_launch_state *sls, int num_nodes);
 static void _handle_msg(void *arg, slurm_msg_t *msg);
 static int  _cr_notify_step_launch(slurm_step_ctx_t *ctx);
 static int  _start_io_timeout_thread(step_launch_state_t *sls);
 static void *_check_io_timeout(void *_sls);
-static int _valid_uid_gid(uid_t uid, gid_t *gid, char **user_name);
 
 static struct io_operations message_socket_ops = {
 	.readable = &eio_message_socket_readable,
@@ -140,7 +159,9 @@ void slurm_step_launch_params_t_init (slurm_step_launch_params_t *ptr)
 	ptr->buffered_stdio = true;
 	memcpy(&ptr->local_fds, &fds, sizeof(fds));
 	ptr->gid = getgid();
-	ptr->cpu_freq = NO_VAL;
+	ptr->cpu_freq_min = NO_VAL;
+	ptr->cpu_freq_max = NO_VAL;
+	ptr->cpu_freq_gov = NO_VAL;
 }
 
 /*
@@ -174,7 +195,7 @@ int slurm_step_launch (slurm_step_ctx_t *ctx,
 	memset(&launch, 0, sizeof(launch));
 
 	if (ctx == NULL || ctx->magic != STEP_CTX_MAGIC) {
-		error("Not a valid slurm_step_ctx_t!");
+		error("%s: Not a valid slurm_step_ctx_t", __func__);
 		slurm_seterrno(EINVAL);
 		return SLURM_ERROR;
 	}
@@ -218,7 +239,8 @@ int slurm_step_launch (slurm_step_ctx_t *ctx,
 	launch.job_id = ctx->step_req->job_id;
 	launch.uid = ctx->step_req->user_id;
 	launch.gid = params->gid;
-	if (!_valid_uid_gid((uid_t)launch.uid, &launch.gid, &launch.user_name))
+	if (!slurm_valid_uid_gid((uid_t)launch.uid, &launch.gid,
+				 &launch.user_name, 0, validate_gid))
 		return SLURM_ERROR;
 	launch.argc = params->argc;
 	launch.argv = params->argv;
@@ -256,9 +278,12 @@ int slurm_step_launch (slurm_step_ctx_t *ctx,
 	launch.task_epilog	= params->task_epilog;
 	launch.cpu_bind_type	= params->cpu_bind_type;
 	launch.cpu_bind		= params->cpu_bind;
-	launch.cpu_freq		= params->cpu_freq;
+	launch.cpu_freq_min	= params->cpu_freq_min;
+	launch.cpu_freq_max	= params->cpu_freq_max;
+	launch.cpu_freq_gov	= params->cpu_freq_gov;
 	launch.mem_bind_type	= params->mem_bind_type;
 	launch.mem_bind		= params->mem_bind;
+	launch.accel_bind_type	= params->accel_bind_type;
 	launch.multi_prog	= params->multi_prog ? 1 : 0;
 	launch.cpus_per_task	= params->cpus_per_task;
 	launch.task_dist	= params->task_dist;
@@ -371,17 +396,18 @@ int slurm_step_launch_add (slurm_step_ctx_t *ctx,
 	int rc = SLURM_SUCCESS;
 
 	debug("Entering slurm_step_launch_add");
+
+	if (ctx == NULL || ctx->magic != STEP_CTX_MAGIC) {
+		error("%s: Not a valid slurm_step_ctx_t", __func__);
+		slurm_seterrno(EINVAL);
+		return SLURM_ERROR;
+	}
+
 	if (!ctx->launch_state->user_managed_io)
 		fatal("slurm_step_launch_add has only been tested "
 		      "with user managed io");
 
 	memset(&launch, 0, sizeof(launch));
-
-	if (ctx == NULL || ctx->magic != STEP_CTX_MAGIC) {
-		error("Not a valid slurm_step_ctx_t!");
-		slurm_seterrno(EINVAL);
-		return SLURM_ERROR;
-	}
 
 	/* Now, hack the step_layout struct if the following it true.
 	   This looks like an ugly hack to support LAM/MPI's lamboot.
@@ -395,7 +421,8 @@ int slurm_step_launch_add (slurm_step_ctx_t *ctx,
 	launch.job_id = ctx->step_req->job_id;
 	launch.uid = ctx->step_req->user_id;
 	launch.gid = params->gid;
-	if (!_valid_uid_gid((uid_t)launch.uid, &launch.gid, &launch.user_name))
+	if (!slurm_valid_uid_gid((uid_t)launch.uid, &launch.gid,
+				 &launch.user_name, 0, validate_gid))
 		return SLURM_ERROR;
 	launch.argc = params->argc;
 	launch.argv = params->argv;
@@ -433,9 +460,12 @@ int slurm_step_launch_add (slurm_step_ctx_t *ctx,
 	launch.task_epilog	= params->task_epilog;
 	launch.cpu_bind_type	= params->cpu_bind_type;
 	launch.cpu_bind		= params->cpu_bind;
-	launch.cpu_freq		= params->cpu_freq;
+	launch.cpu_freq_min	= params->cpu_freq_min;
+	launch.cpu_freq_max	= params->cpu_freq_max;
+	launch.cpu_freq_gov	= params->cpu_freq_gov;
 	launch.mem_bind_type	= params->mem_bind_type;
 	launch.mem_bind		= params->mem_bind;
+	launch.accel_bind_type	= params->accel_bind_type;
 	launch.multi_prog	= params->multi_prog ? 1 : 0;
 	launch.cpus_per_task	= params->cpus_per_task;
 	launch.task_dist	= params->task_dist;
@@ -520,11 +550,11 @@ int slurm_step_launch_wait_start(slurm_step_ctx_t *ctx)
 	ts.tv_sec += 600;	/* 10 min allowed for launch */
 
 	/* Wait for all tasks to start */
-	pthread_mutex_lock(&sls->lock);
+	slurm_mutex_lock(&sls->lock);
 	while (bit_set_count(sls->tasks_started) < sls->tasks_requested) {
 		if (sls->abort) {
 			_step_abort(ctx);
-			pthread_mutex_unlock(&sls->lock);
+			slurm_mutex_unlock(&sls->lock);
 			return SLURM_ERROR;
 		}
 		if (pthread_cond_timedwait(&sls->cond, &sls->lock, &ts) ==
@@ -536,7 +566,7 @@ int slurm_step_launch_wait_start(slurm_step_ctx_t *ctx)
 			sls->abort = true;
 			_step_abort(ctx);
 			pthread_cond_broadcast(&sls->cond);
-			pthread_mutex_unlock(&sls->lock);
+			slurm_mutex_unlock(&sls->lock);
 			return SLURM_ERROR;
 		}
 	}
@@ -545,7 +575,7 @@ int slurm_step_launch_wait_start(slurm_step_ctx_t *ctx)
 		while (sls->io.user->connected < sls->tasks_requested) {
 			if (sls->abort) {
 				_step_abort(ctx);
-				pthread_mutex_unlock(&sls->lock);
+				slurm_mutex_unlock(&sls->lock);
 				return SLURM_ERROR;
 			}
 			if (pthread_cond_timedwait(&sls->cond, &sls->lock,
@@ -554,7 +584,7 @@ int slurm_step_launch_wait_start(slurm_step_ctx_t *ctx)
 				sls->abort = true;
 				_step_abort(ctx);
 				pthread_cond_broadcast(&sls->cond);
-				pthread_mutex_unlock(&sls->lock);
+				slurm_mutex_unlock(&sls->lock);
 				return SLURM_ERROR;
 			}
 		}
@@ -562,7 +592,7 @@ int slurm_step_launch_wait_start(slurm_step_ctx_t *ctx)
 
 	_cr_notify_step_launch(ctx);
 
-	pthread_mutex_unlock(&sls->lock);
+	slurm_mutex_unlock(&sls->lock);
 	return SLURM_SUCCESS;
 }
 
@@ -571,13 +601,18 @@ int slurm_step_launch_wait_start(slurm_step_ctx_t *ctx)
  */
 void slurm_step_launch_wait_finish(slurm_step_ctx_t *ctx)
 {
-	struct step_launch_state *sls = ctx->launch_state;
+	struct step_launch_state *sls;
 	struct timespec ts = {0, 0};
 	bool time_set = false;
 	int errnum;
 
+	if (! ctx || ctx->magic != STEP_CTX_MAGIC)
+		return;
+
+	sls = ctx->launch_state;
+
 	/* Wait for all tasks to complete */
-	pthread_mutex_lock(&sls->lock);
+	slurm_mutex_lock(&sls->lock);
 	while (bit_set_count(sls->tasks_exited) < sls->tasks_requested) {
 		if (!sls->abort) {
 			pthread_cond_wait(&sls->cond, &sls->lock);
@@ -590,16 +625,19 @@ void slurm_step_launch_wait_finish(slurm_step_ctx_t *ctx)
 				sls->abort_action_taken = true;
 			}
 			if (!time_set) {
+				uint16_t kill_wait;
 				/* Only set the time once, because we only want
 				 * to wait STEP_ABORT_TIME, no matter how many
 				 * times the condition variable is signalled.
 				 */
-				ts.tv_sec = time(NULL) + STEP_ABORT_TIME;
+				kill_wait = slurm_get_kill_wait();
+				ts.tv_sec = time(NULL) + STEP_ABORT_TIME
+					+ kill_wait;
 				time_set = true;
 				/* FIXME - should this be a callback? */
 				info("Job step aborted: Waiting up to "
 				     "%d seconds for job step to finish.",
-				     STEP_ABORT_TIME);
+				     kill_wait + STEP_ABORT_TIME);
 			}
 
 			errnum = pthread_cond_timedwait(&sls->cond,
@@ -654,10 +692,10 @@ void slurm_step_launch_wait_finish(slurm_step_ctx_t *ctx)
 	/* Then shutdown the message handler thread */
 	eio_signal_shutdown(sls->msg_handle);
 
-	pthread_mutex_unlock(&sls->lock);
+	slurm_mutex_unlock(&sls->lock);
 	if (sls->msg_thread)
 		pthread_join(sls->msg_thread, NULL);
-	pthread_mutex_lock(&sls->lock);
+	slurm_mutex_lock(&sls->lock);
 	pmi_kvs_free();
 
 	if (sls->msg_handle) {
@@ -670,23 +708,23 @@ void slurm_step_launch_wait_finish(slurm_step_ctx_t *ctx)
 		sls->halt_io_test = true;
 		pthread_cond_broadcast(&sls->cond);
 
-		pthread_mutex_unlock(&sls->lock);
+		slurm_mutex_unlock(&sls->lock);
 		pthread_join(sls->io_timeout_thread, NULL);
-		pthread_mutex_lock(&sls->lock);
+		slurm_mutex_lock(&sls->lock);
 	}
 
 	/* Then wait for the IO thread to finish */
 	if (!sls->user_managed_io) {
-		pthread_mutex_unlock(&sls->lock);
+		slurm_mutex_unlock(&sls->lock);
 		client_io_handler_finish(sls->io.normal);
-		pthread_mutex_lock(&sls->lock);
+		slurm_mutex_lock(&sls->lock);
 
 		client_io_handler_destroy(sls->io.normal);
 		sls->io.normal = NULL;
 	}
 
 	mpi_hook_client_fini(sls->mpi_state);
-	pthread_mutex_unlock(&sls->lock);
+	slurm_mutex_unlock(&sls->lock);
 }
 
 /*
@@ -696,12 +734,17 @@ void slurm_step_launch_wait_finish(slurm_step_ctx_t *ctx)
  */
 void slurm_step_launch_abort(slurm_step_ctx_t *ctx)
 {
-	struct step_launch_state *sls = ctx->launch_state;
+	struct step_launch_state *sls;
 
-	pthread_mutex_lock(&sls->lock);
+	if (!ctx || ctx->magic != STEP_CTX_MAGIC)
+		return;
+
+	sls = ctx->launch_state;
+
+	slurm_mutex_lock(&sls->lock);
 	sls->abort = true;
 	pthread_cond_broadcast(&sls->cond);
-	pthread_mutex_unlock(&sls->lock);
+	slurm_mutex_unlock(&sls->lock);
 }
 
 /*
@@ -727,7 +770,7 @@ void slurm_step_launch_fwd_signal(slurm_step_ctx_t *ctx, int signo)
 	msg.job_step_id = ctx->step_resp->job_step_id;
 	msg.signal      = (uint32_t) signo;
 
-	pthread_mutex_lock(&sls->lock);
+	slurm_mutex_lock(&sls->lock);
 
 	hl = hostlist_create(NULL);
 	for (node_id = 0;
@@ -761,7 +804,7 @@ void slurm_step_launch_fwd_signal(slurm_step_ctx_t *ctx, int signo)
 		}
 	}
 
-	pthread_mutex_unlock(&sls->lock);
+	slurm_mutex_unlock(&sls->lock);
 
 	if (!hostlist_count(hl)) {
 		hostlist_destroy(hl);
@@ -773,6 +816,9 @@ void slurm_step_launch_fwd_signal(slurm_step_ctx_t *ctx, int signo)
 	slurm_msg_t_init(&req);
 	req.msg_type = REQUEST_SIGNAL_TASKS;
 	req.data     = &msg;
+
+	if (ctx->step_resp->use_protocol_ver)
+		req.protocol_version = ctx->step_resp->use_protocol_ver;
 
 	debug3("sending signal %d to job %u on host %s",
 	       signo, ctx->job_id, name);
@@ -799,7 +845,7 @@ void slurm_step_launch_fwd_signal(slurm_step_ctx_t *ctx, int signo)
 		}
 	}
 	list_iterator_destroy(itr);
-	list_destroy(ret_list);
+	FREE_NULL_LIST(ret_list);
 nothing_left:
 	debug2("All tasks have been signalled");
 
@@ -845,7 +891,7 @@ struct step_launch_state *step_launch_state_create(slurm_step_ctx_t *ctx)
 	sls->mpi_info->stepid = ctx->step_resp->job_step_id;
 	sls->mpi_info->step_layout = layout;
 	sls->mpi_state = NULL;
-	pthread_mutex_init(&sls->lock, NULL);
+	slurm_mutex_init(&sls->lock);
 	pthread_cond_init(&sls->cond, NULL);
 
 	for (ii = 0; ii < layout->node_cnt; ii++) {
@@ -1004,15 +1050,18 @@ _estimate_nports(int nclients, int cli_per_port)
 static int _msg_thr_create(struct step_launch_state *sls, int num_nodes)
 {
 	int sock = -1;
-	short port = -1;
+	uint16_t port;
 	eio_obj_t *obj;
 	int i, rc = SLURM_SUCCESS;
 	pthread_attr_t attr;
+	uint16_t *ports;
+	uint16_t eio_timeout;
 
 	debug("Entering _msg_thr_create()");
 	slurm_uid = (uid_t) slurm_get_slurm_user_id();
 
-	sls->msg_handle = eio_handle_create();
+	eio_timeout = slurm_get_srun_eio_timeout();
+	sls->msg_handle = eio_handle_create(eio_timeout);
 	sls->num_resp_port = _estimate_nports(num_nodes, 48);
 	sls->resp_port = xmalloc(sizeof(uint16_t) * sls->num_resp_port);
 
@@ -1022,8 +1071,15 @@ static int _msg_thr_create(struct step_launch_state *sls, int num_nodes)
 	if (!message_socket_ops.timeout)
 		message_socket_ops.timeout = slurm_get_msg_timeout() * 8000;
 
+	ports = slurm_get_srun_port_range();
 	for (i = 0; i < sls->num_resp_port; i++) {
-		if (net_stream_listen(&sock, &port) < 0) {
+		int cc;
+
+		if (ports)
+			cc = net_stream_listen_ports(&sock, &port, ports);
+		else
+			cc = net_stream_listen(&sock, &port);
+		if (cc < 0) {
 			error("unable to initialize step launch listening "
 			      "socket: %m");
 			return SLURM_ERROR;
@@ -1033,7 +1089,7 @@ static int _msg_thr_create(struct step_launch_state *sls, int num_nodes)
 		eio_new_initial_obj(sls->msg_handle, obj);
 	}
 	/* finally, add the listening port that we told the slurmctld about
-	   eariler in the step context creation phase */
+	 * eariler in the step context creation phase */
 	if (sls->slurmctld_socket_fd > -1) {
 		obj = eio_obj_create(sls->slurmctld_socket_fd,
 				     &message_socket_ops, (void *)sls);
@@ -1058,12 +1114,12 @@ _launch_handler(struct step_launch_state *sls, slurm_msg_t *resp)
 	launch_tasks_response_msg_t *msg = resp->data;
 	int i;
 
-	pthread_mutex_lock(&sls->lock);
+	slurm_mutex_lock(&sls->lock);
 	if ((msg->count_of_pids > 0) &&
 	    bit_test(sls->tasks_started, msg->task_ids[0])) {
 		debug3("duplicate launch response received from node %s. "
 		       "this is not an error", msg->node_name);
-		pthread_mutex_unlock(&sls->lock);
+		slurm_mutex_unlock(&sls->lock);
 		return;
 	}
 
@@ -1083,7 +1139,7 @@ _launch_handler(struct step_launch_state *sls, slurm_msg_t *resp)
 		(sls->callback.task_start)(msg);
 
 	pthread_cond_broadcast(&sls->cond);
-	pthread_mutex_unlock(&sls->lock);
+	slurm_mutex_unlock(&sls->lock);
 
 }
 
@@ -1108,7 +1164,7 @@ _exit_handler(struct step_launch_state *sls, slurm_msg_t *exit_msg)
 			task_exit_signal = i;
 	}
 
-	pthread_mutex_lock(&sls->lock);
+	slurm_mutex_lock(&sls->lock);
 
 	for (i = 0; i < msg->num_tasks; i++) {
 		debug("task %u done", msg->task_id_list[i]);
@@ -1119,7 +1175,7 @@ _exit_handler(struct step_launch_state *sls, slurm_msg_t *exit_msg)
 		(sls->callback.task_finish)(msg);
 
 	pthread_cond_broadcast(&sls->cond);
-	pthread_mutex_unlock(&sls->lock);
+	slurm_mutex_unlock(&sls->lock);
 }
 
 static void
@@ -1140,10 +1196,10 @@ _job_complete_handler(struct step_launch_state *sls, slurm_msg_t *complete_msg)
 		(sls->callback.step_complete)(step_msg);
 
 	force_terminated_job = true;
-	pthread_mutex_lock(&sls->lock);
+	slurm_mutex_lock(&sls->lock);
 	sls->abort = true;
 	pthread_cond_broadcast(&sls->cond);
-	pthread_mutex_unlock(&sls->lock);
+	slurm_mutex_unlock(&sls->lock);
 }
 
 static void
@@ -1155,9 +1211,9 @@ _timeout_handler(struct step_launch_state *sls, slurm_msg_t *timeout_msg)
 	if (sls->callback.step_timeout)
 		(sls->callback.step_timeout)(step_msg);
 
-	pthread_mutex_lock(&sls->lock);
+	slurm_mutex_lock(&sls->lock);
 	pthread_cond_broadcast(&sls->cond);
-	pthread_mutex_unlock(&sls->lock);
+	slurm_mutex_unlock(&sls->lock);
 }
 
 /*
@@ -1184,7 +1240,7 @@ _node_fail_handler(struct step_launch_state *sls, slurm_msg_t *fail_msg)
 	num_node_ids = hostset_count(fail_nodes);
 	node_ids = xmalloc(sizeof(int) * num_node_ids);
 
-	pthread_mutex_lock(&sls->lock);
+	slurm_mutex_lock(&sls->lock);
 	all_nodes = hostset_create(sls->layout->node_list);
 	/* find the index number of each down node */
 	for (i = 0; i < num_node_ids; i++) {
@@ -1222,7 +1278,7 @@ _node_fail_handler(struct step_launch_state *sls, slurm_msg_t *fail_msg)
 					    num_node_ids);
 	}
 	pthread_cond_broadcast(&sls->cond);
-	pthread_mutex_unlock(&sls->lock);
+	slurm_mutex_unlock(&sls->lock);
 
 	xfree(node_ids);
 	hostlist_iterator_destroy(fail_itr);
@@ -1264,7 +1320,7 @@ _step_missing_handler(struct step_launch_state *sls, slurm_msg_t *missing_msg)
 	if (sls->user_managed_io)
 		return;
 
-	pthread_mutex_lock(&sls->lock);
+	slurm_mutex_lock(&sls->lock);
 
 	if (!sls->io_timeout_thread_created) {
 		if (_start_io_timeout_thread(sls)) {
@@ -1277,7 +1333,7 @@ _step_missing_handler(struct step_launch_state *sls, slurm_msg_t *missing_msg)
 
 			sls->abort = true;
 			pthread_cond_broadcast(&sls->cond);
-			pthread_mutex_unlock(&sls->lock);
+			slurm_mutex_unlock(&sls->lock);
 			return;
 		}
 	}
@@ -1366,7 +1422,7 @@ _step_missing_handler(struct step_launch_state *sls, slurm_msg_t *missing_msg)
 			sls->io_deadline[node_id] = (time_t)NO_VAL;
 		}
 	}
-	pthread_mutex_unlock(&sls->lock);
+	slurm_mutex_unlock(&sls->lock);
 
 	hostlist_iterator_destroy(fail_itr);
 	hostset_destroy(fail_nodes);
@@ -1406,7 +1462,7 @@ _task_user_managed_io_handler(struct step_launch_state *sls,
 	task_user_managed_io_msg_t *msg =
 		(task_user_managed_io_msg_t *) user_io_msg->data;
 
-	pthread_mutex_lock(&sls->lock);
+	slurm_mutex_lock(&sls->lock);
 
 	debug("task %d user managed io stream established", msg->task_id);
 	/* sanity check */
@@ -1424,7 +1480,7 @@ _task_user_managed_io_handler(struct step_launch_state *sls,
 	user_io_msg->conn_fd = -1;
 
 	pthread_cond_broadcast(&sls->cond);
-	pthread_mutex_unlock(&sls->lock);
+	slurm_mutex_unlock(&sls->lock);
 }
 
 /*
@@ -1434,7 +1490,8 @@ static void
 _handle_msg(void *arg, slurm_msg_t *msg)
 {
 	struct step_launch_state *sls = (struct step_launch_state *)arg;
-	uid_t req_uid = g_slurm_auth_get_uid(msg->auth_cred, NULL);
+	uid_t req_uid = g_slurm_auth_get_uid(msg->auth_cred,
+					     slurm_get_auth_info());
 	uid_t uid = getuid();
 	srun_user_msg_t *um;
 	int rc;
@@ -1449,70 +1506,59 @@ _handle_msg(void *arg, slurm_msg_t *msg)
 	case RESPONSE_LAUNCH_TASKS:
 		debug2("received task launch");
 		_launch_handler(sls, msg);
-		slurm_free_launch_tasks_response_msg(msg->data);
 		break;
 	case MESSAGE_TASK_EXIT:
 		debug2("received task exit");
 		_exit_handler(sls, msg);
-		slurm_free_task_exit_msg(msg->data);
 		break;
 	case SRUN_PING:
 		debug3("slurmctld ping received");
 		slurm_send_rc_msg(msg, SLURM_SUCCESS);
-		slurm_free_srun_ping_msg(msg->data);
 		break;
 	case SRUN_EXEC:
 		_exec_prog(msg);
-		slurm_free_srun_exec_msg(msg->data);
 		break;
 	case SRUN_JOB_COMPLETE:
 		debug2("received job step complete message");
 		_job_complete_handler(sls, msg);
-		slurm_free_srun_job_complete_msg(msg->data);
 		break;
 	case SRUN_TIMEOUT:
 		debug2("received job step timeout message");
 		_timeout_handler(sls, msg);
-		slurm_free_srun_timeout_msg(msg->data);
 		break;
 	case SRUN_USER_MSG:
 		um = msg->data;
 		info("%s", um->msg);
-		slurm_free_srun_user_msg(msg->data);
 		break;
 	case SRUN_NODE_FAIL:
 		debug2("received srun node fail");
 		_node_fail_handler(sls, msg);
-		slurm_free_srun_node_fail_msg(msg->data);
 		break;
 	case SRUN_STEP_MISSING:
 		debug2("received notice of missing job step");
 		_step_missing_handler(sls, msg);
-		slurm_free_srun_step_missing_msg(msg->data);
 		break;
 	case SRUN_STEP_SIGNAL:
 		debug2("received step signal RPC");
 		_step_step_signal(sls, msg);
-		slurm_free_job_step_kill_msg(msg->data);
 		break;
 	case PMI_KVS_PUT_REQ:
 		debug2("PMI_KVS_PUT_REQ received");
-		rc = pmi_kvs_put((struct kvs_comm_set *) msg->data);
+		rc = pmi_kvs_put((kvs_comm_set_t *) msg->data);
 		slurm_send_rc_msg(msg, rc);
 		break;
 	case PMI_KVS_GET_REQ:
 		debug2("PMI_KVS_GET_REQ received");
 		rc = pmi_kvs_get((kvs_get_msg_t *) msg->data);
 		slurm_send_rc_msg(msg, rc);
-		slurm_free_get_kvs_msg((kvs_get_msg_t *) msg->data);
 		break;
 	case TASK_USER_MANAGED_IO_STREAM:
 		debug2("TASK_USER_MANAGED_IO_STREAM");
 		_task_user_managed_io_handler(sls, msg);
 		break;
 	default:
-		error("received spurious message type: %u",
-		      msg->msg_type);
+		error("%s: received spurious message type: %u",
+		      __func__, msg->msg_type);
 		break;
 	}
 	return;
@@ -1540,10 +1586,10 @@ static int _fail_step_tasks(slurm_step_ctx_t *ctx, char *node, int ret_code)
 	nodeid = nodelist_find(ctx->step_resp->step_layout->node_list, node);
 #endif
 
-	pthread_mutex_lock(&sls->lock);
+	slurm_mutex_lock(&sls->lock);
 	sls->abort = true;
 	pthread_cond_broadcast(&sls->cond);
-	pthread_mutex_unlock(&sls->lock);
+	slurm_mutex_unlock(&sls->lock);
 
 	memset(&msg, 0, sizeof(step_complete_msg_t));
 	msg.job_id = ctx->job_id;
@@ -1555,6 +1601,9 @@ static int _fail_step_tasks(slurm_step_ctx_t *ctx, char *node, int ret_code)
 	slurm_msg_t_init(&req);
 	req.msg_type = REQUEST_STEP_COMPLETE;
 	req.data = &msg;
+
+	if (ctx->step_resp->use_protocol_ver)
+		req.protocol_version = ctx->step_resp->use_protocol_ver;
 
 	if (slurm_send_recv_controller_rc_msg(&req, &rc) < 0)
 	       return SLURM_ERROR;
@@ -1588,9 +1637,19 @@ static int _launch_tasks(slurm_step_ctx_t *ctx,
 		hostlist_destroy(hl);
 	}
 
+	/* Extend timeout based upon BatchStartTime to permit for a long
+	 * running Prolog */
+	if (timeout <= 0) {
+		timeout = (slurm_get_msg_timeout() +
+			   slurm_get_batch_start_timeout()) * 1000;
+	}
+
 	slurm_msg_t_init(&msg);
 	msg.msg_type = REQUEST_LAUNCH_TASKS;
 	msg.data = launch_msg;
+
+	if (ctx->step_resp->use_protocol_ver)
+		msg.protocol_version = ctx->step_resp->use_protocol_ver;
 
 #ifdef HAVE_FRONT_END
 	slurm_cred_get_args(ctx->step_resp->cred, &cred_args);
@@ -1635,7 +1694,7 @@ static int _launch_tasks(slurm_step_ctx_t *ctx,
 		}
 	}
 	list_iterator_destroy(ret_itr);
-	list_destroy(ret_list);
+	FREE_NULL_LIST(ret_list);
 
 	if (tot_rc != SLURM_SUCCESS)
 		return tot_rc;
@@ -1716,7 +1775,7 @@ _exec_prog(slurm_msg_t *msg)
 	}
 	if (checkpoint) {
 		/* OpenMPI specific checkpoint support */
-		info("Checkpoint started at %s", slurm_ctime(&now));
+		info("Checkpoint started at %s", slurm_ctime2(&now));
 		for (i=0; (exec_msg->argv[i] && (i<2)); i++) {
 			argv[i] = exec_msg->argv[i];
 		}
@@ -1763,10 +1822,10 @@ fini:	if (checkpoint) {
 		now = time(NULL);
 		if (exit_code) {
 			info("Checkpoint completion code %d at %s",
-			     exit_code, slurm_ctime(&now));
+			     exit_code, slurm_ctime2(&now));
 		} else {
 			info("Checkpoint completed successfully at %s",
-			     slurm_ctime(&now));
+			     slurm_ctime2(&now));
 		}
 		if (buf[0])
 			info("Checkpoint location: %s", buf);
@@ -1783,7 +1842,7 @@ fini:	if (checkpoint) {
 int
 step_launch_notify_io_failure(step_launch_state_t *sls, int node_id)
 {
-	pthread_mutex_lock(&sls->lock);
+	slurm_mutex_lock(&sls->lock);
 
 	bit_set(sls->node_io_error, node_id);
 	debug("IO error on node %d", node_id);
@@ -1814,7 +1873,7 @@ step_launch_notify_io_failure(step_launch_state_t *sls, int node_id)
 		}
 	}
 
-	pthread_mutex_unlock(&sls->lock);
+	slurm_mutex_unlock(&sls->lock);
 
 	return SLURM_SUCCESS;
 }
@@ -1831,9 +1890,9 @@ step_launch_notify_io_failure(step_launch_state_t *sls, int node_id)
 int
 step_launch_clear_questionable_state(step_launch_state_t *sls, int node_id)
 {
-	pthread_mutex_lock(&sls->lock);
+	slurm_mutex_lock(&sls->lock);
 	sls->io_deadline[node_id] = (time_t)NO_VAL;
-	pthread_mutex_unlock(&sls->lock);
+	slurm_mutex_unlock(&sls->lock);
 	return SLURM_SUCCESS;
 }
 
@@ -1866,7 +1925,7 @@ _check_io_timeout(void *_sls)
 	struct timespec ts = {0, 0};
 	step_launch_state_t *sls = (step_launch_state_t *)_sls;
 
-	pthread_mutex_lock(&sls->lock);
+	slurm_mutex_lock(&sls->lock);
 
 	while (1) {
 		if (sls->halt_io_test || sls->abort)
@@ -1904,86 +1963,6 @@ _check_io_timeout(void *_sls)
 			pthread_cond_timedwait(&sls->cond, &sls->lock, &ts);
 		}
 	}
-	pthread_mutex_unlock(&sls->lock);
+	slurm_mutex_unlock(&sls->lock);
 	return NULL;
-}
-
-/* returns 0 if invalid gid, otherwise returns 1.  Set gid with
- * correct gid if root launched job.  Also set user_name
- * if not already set. */
-static int
-_valid_uid_gid(uid_t uid, gid_t *gid, char **user_name)
-{
-	struct passwd pwd, *result;
-	char buffer[PW_BUF_SIZE];
-	int rc;
-
-#ifdef HAVE_NATIVE_CRAY
-	struct group *grp;
-	int i;
-#endif
-	rc = slurm_getpwuid_r(uid, &pwd, buffer, PW_BUF_SIZE, &result);
-
-	if (!result || rc) {
-		error("uid %ld not found on system", (long)uid);
-		slurm_seterrno(ESLURMD_UID_NOT_FOUND);
-		return 0;
-	}
-
-	if (!*user_name)
-		*user_name = xstrdup(result->pw_name);
-
-#ifdef HAVE_NATIVE_CRAY
-	/* On a Cray this
-	 * needs to happen before the launch of the tasks.  Since a native
-	 * Cray really isn't a cluster but a distributed system this should
-	 * be ok.
-	 * This could be hacked by a user, but the only damage they
-	 * could really do is set SLURM_USER_NAME to be something
-	 * other than the actual name.  Running any getpwXXX commands
-	 * on a cray compute node is not scalable and could
-	 * potentially cause all sorts of issues and timeouts when
-	 * talking with LDAP or NIS when done on the compute node.  We
-	 * have not seen this issue on a regular cluster, so we do
-	 * the validating there instead when not on a Cray.
-	 */
-
-	if (result->pw_gid == *gid)
-		return 1;
-
-	grp = getgrgid(*gid);
-	if (!grp) {
-		error("gid %ld not found on system", (long)(*gid));
-		slurm_seterrno(ESLURMD_GID_NOT_FOUND);
-		return 0;
-	}
-
-	/* Allow user root to use any valid gid */
-	if (result->pw_uid == 0) {
-		result->pw_gid = *gid;
-		return 1;
-	}
-	for (i = 0; grp->gr_mem[i]; i++) {
-		if (!strcmp(result->pw_name, grp->gr_mem[i])) {
-			result->pw_gid = *gid;
-			return 1;
-		}
-	}
-
-	/* root user may have launched this job for this user, but
-	 * root did not explicitly set the gid. This would set the
-	 * gid to 0. In this case we should set the appropriate
-	 * default gid for the user (from the passwd struct).
-	 */
-	if (*gid == 0) {
-		*gid = result->pw_gid;
-		return 1;
-	}
-	error("uid %ld is not a member of gid %ld",
-		(long)result->pw_uid, (long)(*gid));
-	slurm_seterrno(ESLURMD_GID_NOT_FOUND);
-	return 0;
-#else
-	return 1;
-#endif
 }

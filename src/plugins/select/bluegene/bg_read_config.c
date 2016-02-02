@@ -126,10 +126,7 @@ extern void destroy_image(void *ptr)
 	image_t *n = (image_t *)ptr;
 	if (n) {
 		xfree(n->name);
-		if (n->groups) {
-			list_destroy(n->groups);
-			n->groups = NULL;
-		}
+		FREE_NULL_LIST(n->groups);
 		xfree(n);
 	}
 }
@@ -572,7 +569,7 @@ extern int read_bg_conf(void)
 
 	if (bg_conf->mp_cnode_cnt <= 0)
 		fatal("You should have more than 0 nodes "
-		      "per base partition");
+		      "per midplane");
 	bg_conf->actual_cnodes_per_mp = bg_conf->mp_cnode_cnt;
 	bg_conf->quarter_cnode_cnt = bg_conf->mp_cnode_cnt/4;
 
@@ -590,7 +587,7 @@ extern int read_bg_conf(void)
 	bg_conf->cpu_ratio = bg_conf->cpus_per_mp/bg_conf->mp_cnode_cnt;
 	if (!bg_conf->cpu_ratio)
 		fatal("We appear to have less than 1 cpu on a cnode.  "
-		      "You specified %u for BasePartitionNodeCnt "
+		      "You specified %u for MidplaneNodeCnt "
 		      "in the blugene.conf and %u cpus "
 		      "for each node in the slurm.conf",
 		      bg_conf->mp_cnode_cnt, bg_conf->cpus_per_mp);
@@ -874,12 +871,17 @@ no_calc:
 		      "STATIC LayoutMode.  Please update your bluegene.conf.");
 
 #ifdef HAVE_BGQ
-	if ((bg_recover != NOT_FROM_CONTROLLER)
+	if ((bg_recover != NOT_FROM_CONTROLLER) && assoc_mgr_qos_list
 	    && s_p_get_string(&tmp_char, "RebootQOSList", tbl)) {
 		bool valid;
 		char *token, *last = NULL;
 		slurmdb_qos_rec_t *qos = NULL;
+		assoc_mgr_lock_t locks = { NO_LOCK, NO_LOCK, NO_LOCK,
+					   READ_LOCK, NO_LOCK,
+					   NO_LOCK, NO_LOCK };
 
+		/* Lock here to avoid g_qos_count changing under us */
+		assoc_mgr_lock(&locks);
 		bg_conf->reboot_qos_bitmap = bit_alloc(g_qos_count);
 		itr = list_iterator_create(assoc_mgr_qos_list);
 
@@ -901,6 +903,7 @@ no_calc:
 		}
 		list_iterator_destroy(itr);
 		xfree(tmp_char);
+		assoc_mgr_unlock(&locks);
 	}
 #endif
 

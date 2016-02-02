@@ -65,32 +65,35 @@
 #include "src/common/hostlist.h"
 #include "src/common/list.h"
 #include "src/common/log.h"
+#include "src/common/slurmdb_defs.h"
 #include "src/common/slurm_protocol_api.h"
 #include "src/common/xmalloc.h"
-#include "src/common/slurmdb_defs.h"
 #include "src/squeue/print.h"
 
 typedef struct job_step {
 	uint32_t job_id;
-	uint16_t array_id;
+	uint32_t array_id;
 	uint32_t step_id;
 } squeue_job_step_t;
 
 struct squeue_parameters {
 	bool all_flag;
 	bool array_flag;
+	int  iterate;
 	bool job_flag;
 	bool start_flag;
 	bool step_flag;
+	bool long_format;
 	bool long_list;
 	bool no_header;
-	int  iterate;
+	bool priority_flag;
 	int  verbose;
 
 	char* accounts;
 	List clusters;
 	uint32_t cluster_flags;
 	char* format;
+	char* format_long;
 	char* jobs;
 	char* names;
 	hostset_t nodes;
@@ -105,6 +108,8 @@ struct squeue_parameters {
 
 	uint32_t job_id;	/* set if request for a single job ID */
 	uint32_t user_id;	/* set if request for a single user ID */
+
+	uint32_t convert_flags;
 
 	List  account_list;
 	List  format_list;
@@ -122,6 +127,7 @@ extern struct squeue_parameters params;
 
 extern void parse_command_line( int argc, char* argv[] );
 extern int  parse_format( char* format );
+extern int  parse_long_format( char* format_long);
 extern void sort_job_list( List job_list );
 extern void sort_jobs_by_start_time( List job_list );
 extern void sort_step_list( List step_list );

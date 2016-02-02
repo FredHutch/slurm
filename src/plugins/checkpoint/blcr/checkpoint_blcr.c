@@ -109,8 +109,6 @@ struct ckpt_req {
 
 static void _send_sig(uint32_t job_id, uint32_t step_id, uint16_t signal,
 		      char *nodelist);
-static void _send_sig(uint32_t job_id, uint32_t step_id,
-		      uint16_t signal, char *nodelist);
 static void *_ckpt_agent_thr(void *arg);
 static void _ckpt_req_free(void *ptr);
 static int _on_ckpt_complete(uint32_t group_id, uint32_t user_id,
@@ -150,15 +148,12 @@ static pthread_cond_t ckpt_agent_cond = PTHREAD_COND_INITIALIZER;
  * only load checkpoint plugins if the plugin_type string has a
  * prefix of "checkpoint/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the checkpoint API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]       	= "BLCR checkpoint plugin";
 const char plugin_type[]       	= "checkpoint/blcr";
-const uint32_t plugin_version	= 100;
+const uint32_t plugin_version	= SLURM_VERSION_NUMBER;
 
 /*
  * init() is called when the plugin is loaded, before any other functions
@@ -348,7 +343,7 @@ extern int slurm_ckpt_pack_job(check_jobinfo_t jobinfo, Buf buffer,
 	struct check_job_info *check_ptr =
 		(struct check_job_info *)jobinfo;
 
-	if (protocol_version >= SLURM_14_03_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		uint32_t x;
 		uint32_t y;
 		uint32_t z;
@@ -369,11 +364,6 @@ extern int slurm_ckpt_pack_job(check_jobinfo_t jobinfo, Buf buffer,
 		set_buf_offset(buffer, x);
 		pack32(z - y, buffer);
 		set_buf_offset(buffer, z);
-	} else if (protocol_version >= SLURM_2_6_PROTOCOL_VERSION) {
-		pack16(check_ptr->disabled, buffer);
-		pack_time(check_ptr->time_stamp, buffer);
-		pack32(check_ptr->error_code, buffer);
-		packstr(check_ptr->error_msg, buffer);
 	}
 
 	return SLURM_SUCCESS;
@@ -386,7 +376,7 @@ extern int slurm_ckpt_unpack_job(check_jobinfo_t jobinfo, Buf buffer,
 	struct check_job_info *check_ptr =
 		(struct check_job_info *)jobinfo;
 
-	if (protocol_version >= SLURM_14_03_PROTOCOL_VERSION) {
+	if (protocol_version >= SLURM_MIN_PROTOCOL_VERSION) {
 		uint16_t id;
 		uint32_t size;
 
@@ -404,13 +394,8 @@ extern int slurm_ckpt_unpack_job(check_jobinfo_t jobinfo, Buf buffer,
 					       &uint32_tmp, buffer);
 		}
 
-	} else if (protocol_version >= SLURM_2_6_PROTOCOL_VERSION) {
-		safe_unpack16(&check_ptr->disabled, buffer);
-		safe_unpack_time(&check_ptr->time_stamp, buffer);
-		safe_unpack32(&check_ptr->error_code, buffer);
-		safe_unpackstr_xmalloc(&check_ptr->error_msg,
-				       &uint32_tmp, buffer);
 	}
+
 	return SLURM_SUCCESS;
 
     unpack_error:
@@ -606,6 +591,9 @@ static void _send_sig(uint32_t job_id, uint32_t step_id, uint16_t signal,
 {
 	agent_arg_t *agent_args;
 	kill_tasks_msg_t *kill_tasks_msg;
+	hostlist_iterator_t hi;
+	char *host;
+	struct node_record *node_ptr;
 
 	kill_tasks_msg = xmalloc(sizeof(kill_tasks_msg_t));
 	kill_tasks_msg->job_id		= job_id;
@@ -618,6 +606,16 @@ static void _send_sig(uint32_t job_id, uint32_t step_id, uint16_t signal,
 	agent_args->msg_args		= kill_tasks_msg;
 	agent_args->hostlist		= hostlist_create(nodelist);
 	agent_args->node_count		= hostlist_count(agent_args->hostlist);
+	agent_args->protocol_version = SLURM_PROTOCOL_VERSION;
+	hi = hostlist_iterator_create(agent_args->hostlist);
+	while ((host = hostlist_next(hi))) {
+		if ((node_ptr = find_node_record(host)) &&
+		    (agent_args->protocol_version > node_ptr->protocol_version))
+			agent_args->protocol_version =
+				node_ptr->protocol_version;
+		free(host);
+	}
+	hostlist_iterator_destroy(hi);
 
 	agent_queue_request(agent_args);
 }
@@ -656,7 +654,7 @@ static void *_ckpt_agent_thr(void *arg)
 	int rc;
 	/* Locks: write job */
 	slurmctld_lock_t job_write_lock = {
-		NO_LOCK, WRITE_LOCK, NO_LOCK, NO_LOCK };
+		NO_LOCK, WRITE_LOCK, READ_LOCK, NO_LOCK };
 	struct job_record *job_ptr;
 	struct step_record *step_ptr;
 	struct check_job_info *check_ptr;
@@ -705,12 +703,12 @@ static void *_ckpt_agent_thr(void *arg)
 		check_ptr->error_msg = xstrdup(slurm_strerror(rc));
 
  out:
-	unlock_slurmctld(job_write_lock);
 
 	if (req->sig_done) {
 		_send_sig(req->job_id, req->step_id, req->sig_done,
 			  req->nodelist);
 	}
+	unlock_slurmctld(job_write_lock);
 
 	_on_ckpt_complete(req->gid, req->uid, req->job_id, req->step_id,
 			  req->image_dir, rc);

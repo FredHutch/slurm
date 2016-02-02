@@ -91,14 +91,12 @@
  * only load authentication plugins if the plugin_type string has a prefix
  * of "auth/".
  *
- * plugin_version   - specifies the version number of the plugin.
- * min_plug_version - specifies the minumum version number of incoming
- *                    messages that this plugin can accept
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]       	= "Job submit Cray plugin";
 const char plugin_type[]       	= "job_submit/cray";
-const uint32_t plugin_version   = 100;
-const uint32_t min_plug_version = 100;
+const uint32_t plugin_version   = SLURM_VERSION_NUMBER;
 
 #define CRAY_GRES "craynetwork"
 #define CRAY_GRES_POSTFIX CRAY_GRES":1"
@@ -138,6 +136,9 @@ extern int job_submit(struct job_descriptor *job_desc, uint32_t submit_uid)
 extern int job_modify(struct job_descriptor *job_desc,
 		      struct job_record *job_ptr, uint32_t submit_uid)
 {
-	_append_gres(job_desc);
+	/* Don't call this on modify it shouldn't be needed and will
+	 * mess things up if modifying a running job
+	 */
+	//_append_gres(job_desc);
 	return SLURM_SUCCESS;
 }

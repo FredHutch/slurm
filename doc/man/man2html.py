@@ -14,6 +14,8 @@ url_regex = re.compile(url_pat)
 version_pat = r'(@SLURM_VERSION@)'
 version_regex = re.compile(version_pat)
 
+ids = {}
+
 dirname = ''
 
 # Instert tags for options
@@ -27,7 +29,14 @@ def insert_tag(html, lineIn):
     if lineIn[0:4] == "<H2>":
         posEnd = lineIn.find("</H2>")
         if posEnd != -1:
-            html.write('<a id="SECTION_' + lineIn[4:posEnd] + '"></a>\n')
+            id_name = lineIn[4:posEnd]
+            id_name = id_name.replace(' ','-')
+            if id_name in ids:
+                ids[id_name] += 1
+                id_name += "_" + str(ids[id_name])
+            else:
+                ids[id_name] = 0
+            html.write('<a id="SECTION_' + id_name + '"></a>\n')
             return
 
     if lineIn[0:7] != "<DT><B>":
@@ -41,7 +50,15 @@ def insert_tag(html, lineIn):
     if posEnd == -1:
         # poorly constructed
         return
-    html.write('<a id="OPT_' + lineIn[posBgn:posEnd] + '"></a>\n')
+
+    id_name = lineIn[posBgn:posEnd]
+    id_name = id_name.replace(' ','-')
+    if id_name in ids:
+        ids[id_name] += 1
+        id_name += "_" + str(ids[id_name])
+    else:
+        ids[id_name] = 0
+    html.write('<a id="OPT_' + id_name + '"></a>\n')
     return
 
 
@@ -184,6 +201,8 @@ for filename in files:
         # Remove html header/footer created by man2html
         if line == "Content-type: text/html\n":
             continue
+        if line == "Content-type: text/html; charset=UTF-8\n":
+            continue
         if line[:6] == "<HTML>":
             continue
         if line[:7] == "</HEAD>":
@@ -203,6 +222,7 @@ for filename in files:
         line = url_regex.sub(url_rewrite, line)
         html.write(line)
     lines = open(sys.argv[3], 'r').read()
+    lines = lines.replace(".shtml",".html")
     lines = version_regex.sub(version_rewrite, lines)
     html.write(lines)
 #    html.write(<!--#include virtual="footer.txt"-->)

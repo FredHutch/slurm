@@ -52,8 +52,10 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <stdlib.h>
 
 #include "src/common/slurm_xlator.h"	/* Must be first */
+#include "src/common/slurm_strcasestr.h"
 #include "other_select.h"
 #include "basil_interface.h"
 #include "cray_config.h"
@@ -117,6 +119,8 @@ char *uid_to_string (uid_t uid) { return NULL; }
 #  define SIGRTMIN SIGUSR2+1
 #endif
 
+int inv_interval = 0;
+
 /* All current (2011) XT/XE installations have a maximum dimension of 3,
  * smaller systems deploy a 2D Torus which has no connectivity in
  * X-dimension.  We know the highest system dimensions possible here
@@ -146,16 +150,13 @@ static int select_cray_dim_size[3] = {-1};
  * only load select plugins if the plugin_type string has a
  * prefix of "select/".
  *
- * plugin_version - an unsigned 32-bit integer giving the version number
- * of the plugin.  If major and minor revisions are desired, the major
- * version number may be multiplied by a suitable magnitude constant such
- * as 100 or 1000.  Various SLURM versions will likely require a certain
- * minimum version for their plugins as the node selection API matures.
+ * plugin_version - an unsigned 32-bit integer containing the Slurm version
+ * (major.minor.micro combined into a single number).
  */
 const char plugin_name[]	= "Cray node selection plugin";
-const char plugin_type[]	= "select/cray";
+const char plugin_type[]	= "select/alps";
 uint32_t plugin_id		= 104;
-const uint32_t plugin_version	= 110;
+const uint32_t plugin_version	= SLURM_VERSION_NUMBER;
 
 static bool _zero_size_job ( struct job_record *job_ptr )
 {
@@ -165,6 +166,27 @@ static bool _zero_size_job ( struct job_record *job_ptr )
 	    (job_ptr->details->max_nodes == 0))
 		return true;
 	return false;
+}
+
+static void _set_inv_interval(void)
+{
+	char *tmp_ptr, *sched_params = slurm_get_sched_params();
+	int i;
+
+	if (sched_params) {
+		if (sched_params &&
+		    (tmp_ptr = slurm_strcasestr(sched_params,
+						"inventory_interval="))) {
+		/*                                   0123456789012345 */
+			i = atoi(tmp_ptr + 19);
+			if (i < 0)
+				error("ignoring SchedulerParameters: "
+				      "inventory_interval of %d", i);
+			else
+				inv_interval = i;
+		}
+		xfree(sched_params);
+	}
 }
 
 /*
@@ -190,6 +212,7 @@ extern int init ( void )
 			fatal("SelectTypeParams=other_cons_res is not valid "
 			      "for select/alps");
 		}
+		_set_inv_interval();
 	}
 
 	create_config();
@@ -296,10 +319,10 @@ extern int select_p_job_test(struct job_record *job_ptr, bitstr_t *bitmap,
 		job_ptr->details->min_cpus = 0;
 	}
 
-	if (job_ptr->details->core_spec) {
+	if (job_ptr->details->core_spec != (uint16_t) NO_VAL) {
 		verbose("select/alps: job %u core_spec(%u) not supported",
 			job_ptr->job_id, job_ptr->details->core_spec);
-		job_ptr->details->core_spec = 0;
+		job_ptr->details->core_spec = (uint16_t) NO_VAL;
 	}
 
 	return other_job_test(job_ptr, bitmap, min_nodes, max_nodes,
@@ -334,10 +357,10 @@ extern int select_p_job_ready(struct job_record *job_ptr)
 	 *		means that we need to confirm only if batch_flag is 0,
 	 *		and execute the other_job_ready() only in slurmctld.
 	 */
-	if (slurmctld_primary && !job_ptr->batch_flag &&
-	    !_zero_size_job(job_ptr))
+	if ((slurmctld_primary || (job_ptr->job_state == NO_VAL))
+	    && !job_ptr->batch_flag && !_zero_size_job(job_ptr))
 		rc = do_basil_confirm(job_ptr);
-	if ((rc != SLURM_SUCCESS) || (job_ptr->job_state == (uint16_t) NO_VAL))
+	if ((rc != SLURM_SUCCESS) || (job_ptr->job_state == NO_VAL))
 		return rc;
 	return other_job_ready(job_ptr);
 }
@@ -384,6 +407,12 @@ extern int select_p_job_signal(struct job_record *job_ptr, int signal)
 			case SIGURG:
 			case SIGWINCH:
 				break;
+		        case SIGTERM:
+		        case SIGKILL:
+				if (cray_conf->no_apid_signal_on_kill &&
+				    job_ptr->batch_flag)
+					return other_job_signal(
+						job_ptr, signal);
 			default:
 				if (signal < SIGRTMIN)
 					do_basil_release(job_ptr);
@@ -410,7 +439,13 @@ extern int select_p_job_fini(struct job_record *job_ptr)
 {
 	if (job_ptr == NULL)
 		return SLURM_SUCCESS;
-	if (slurmctld_primary && !_zero_size_job(job_ptr) &&
+
+	/* Don't run the release in the controller for batch jobs.  It is
+	 * handled on the stepd end.
+	 */
+	if (((slurmctld_primary && !job_ptr->batch_flag) ||
+	     (job_ptr->job_state == NO_VAL))
+	    && !_zero_size_job(job_ptr) &&
 	    (do_basil_release(job_ptr) != SLURM_SUCCESS))
 		return SLURM_ERROR;
 	/*
@@ -418,7 +453,7 @@ extern int select_p_job_fini(struct job_record *job_ptr)
 	 *             stepdmgr, where job_state == NO_VAL is used to
 	 *             distinguish the context from that of slurmctld.
 	 */
-	if (job_ptr->job_state == (uint16_t)NO_VAL)
+	if (job_ptr->job_state == NO_VAL)
 		return SLURM_SUCCESS;
 	return other_job_fini(job_ptr);
 }
@@ -842,6 +877,9 @@ extern char *select_p_select_jobinfo_xstrdup(select_jobinfo_t *jobinfo,
 
 extern int select_p_update_block(update_block_msg_t *block_desc_ptr)
 {
+	if (slurmctld_primary && basil_inventory())
+		return SLURM_ERROR;
+
 	return other_update_block(block_desc_ptr);
 }
 
@@ -855,11 +893,11 @@ extern int select_p_fail_cnode(struct step_record *step_ptr)
 	return other_fail_cnode(step_ptr);
 }
 
-extern int select_p_get_info_from_plugin(enum select_jobdata_type info,
+extern int select_p_get_info_from_plugin(enum select_plugindata_info dinfo,
 					 struct job_record *job_ptr,
 					 void *data)
 {
-	return other_get_info_from_plugin(info, job_ptr, data);
+	return other_get_info_from_plugin(dinfo, job_ptr, data);
 }
 
 extern int select_p_update_node_config(int index)
@@ -879,17 +917,18 @@ extern int select_p_alter_node_cnt(enum select_node_cnt type, void *data)
 
 extern int select_p_reconfigure(void)
 {
-	if (slurmctld_primary && basil_inventory())
-		return SLURM_ERROR;
+	_set_inv_interval();
+
 	return other_reconfigure();
 }
 
-extern bitstr_t * select_p_resv_test(bitstr_t *avail_bitmap, uint32_t node_cnt,
-				     uint32_t *core_cnt, bitstr_t **core_bitmap,
-				     uint32_t flags)
+extern bitstr_t * select_p_resv_test(resv_desc_msg_t *resv_desc_ptr,
+				     uint32_t node_cnt,
+				     bitstr_t *avail_bitmap,
+				     bitstr_t **core_bitmap)
 {
-	return other_resv_test(avail_bitmap, node_cnt, core_cnt, core_bitmap,
-			       flags);
+	return other_resv_test(resv_desc_ptr, node_cnt,
+			       avail_bitmap, core_bitmap);
 }
 
 extern void select_p_ba_init(node_info_msg_t *node_info_ptr, bool sanity_check)
@@ -951,4 +990,9 @@ extern int *select_p_ba_get_dims(void)
 extern void select_p_ba_fini(void)
 {
 	other_ba_fini();
+}
+
+extern bitstr_t *select_p_ba_cnodelist2bitmap(char *cnodelist)
+{
+	return other_ba_cnodelist2bitmap(cnodelist);
 }

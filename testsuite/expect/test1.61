@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          test to verify job step time limit
@@ -79,6 +79,7 @@ if {$job_id == 0} {
 #
 # Wait for job completion
 #
+sleep 60
 if {[wait_for_job $job_id DONE] != 0} {
 	send_user "\nFAILURE: waiting for job to complete\n"
 	set exit_code 1
@@ -114,7 +115,7 @@ if {[wait_for_file $file_err] == 0} {
 	set timed_out 0
 	spawn cat $file_err
 	expect {
-		-re " STEP $job_id.$step_id CANCELLED AT.*DUE TO TIME LIMIT " {
+		-re " STEP $job_id.$step_id ON .* CANCELLED AT.*DUE TO TIME LIMIT " {
 			set timed_out 1
 			exp_continue
 		}

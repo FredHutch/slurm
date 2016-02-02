@@ -1,4 +1,4 @@
-#!/usr/bin/expect
+#!/usr/bin/env expect
 ############################################################################
 # Purpose: Test of SLURM functionality
 #          Test of processors, memory, and temporary disk space
@@ -126,10 +126,11 @@ expect {
 		wait
 	}
 }
-cancel_job $job_id
-
 if {$matches != 5} {
 	send_user "\nFAILURE: Did not get constraints ($matches of 5)\n"
+	set exit_code 1
+}
+if {[cancel_job $job_id] != 0} {
 	set exit_code 1
 }
 if {$exit_code == 0} {

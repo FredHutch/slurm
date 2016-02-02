@@ -68,6 +68,22 @@ extern void build_node_details(struct job_record *job_ptr, bool new_alloc);
 extern void deallocate_nodes(struct job_record *job_ptr, bool timeout,
 		bool suspended, bool preempted);
 
+/* Remove nodes from consideration for allocation based upon "mcs" by
+ * other users
+ * job_ptr IN - Job to be scheduled
+ * usable_node_mask IN/OUT - Nodes available for use by this job's mcs
+ */
+extern void filter_by_node_mcs(struct job_record *job_ptr, int mcs_select,
+			       bitstr_t *usable_node_mask);
+
+/* Remove nodes from consideration for allocation based upon "ownership" by
+ * other users
+ * job_ptr IN - Job to be scheduled
+ * usable_node_mask IN/OUT - Nodes available for use by this job's user
+ */
+extern void filter_by_node_owner(struct job_record *job_ptr,
+				 bitstr_t *usable_node_mask);
+
 /*
  * re_kill_job - for a given job, deallocate its nodes for a second time,
  *	basically a cleanup for failed deallocate() calls
@@ -85,6 +101,7 @@ extern void re_kill_job(struct job_record *job_ptr);
  * IN select_node_bitmap - bitmap of nodes to be used for the
  *	job's resource allocation (not returned if NULL), caller
  *	must free
+ * IN unavail_node_str - Nodes which are currently unavailable.
  * OUT err_msg - if not NULL set to error message for job, caller must xfree
  * RET 0 on success, ESLURM code from slurm_errno.h otherwise
  * globals: list_part - global list of partition info
@@ -99,6 +116,7 @@ extern void re_kill_job(struct job_record *job_ptr);
  *	3) Call allocate_nodes() to perform the actual allocation
  */
 extern int select_nodes(struct job_record *job_ptr, bool test_only,
-		bitstr_t **select_node_bitmap, char **err_msg);
+			bitstr_t **select_node_bitmap, char *unavail_node_str,
+			char **err_msg);
 
 #endif /* !_HAVE_NODE_SCHEDULER_H */

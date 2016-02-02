@@ -39,18 +39,6 @@
 #ifndef _HAVE_ACCT_POLICY_H
 #define _HAVE_ACCT_POLICY_H
 
-#define ADMIN_SET_LIMIT 0xffff
-
-typedef struct {
-	uint16_t max_cpus;
-	uint16_t max_nodes;
-	uint16_t min_cpus;
-	uint16_t min_nodes;
-	uint16_t pn_min_memory;
-	uint16_t qos;
-	uint16_t time;
-} acct_policy_limit_set_t;
-
 /*
  * acct_policy_add_job_submit - Note that a job has been submitted for
  *	accounting policy purposes.
@@ -89,9 +77,9 @@ extern void acct_policy_alter_job(struct job_record *job_ptr,
 
 extern bool acct_policy_validate(job_desc_msg_t *job_desc,
 				 struct part_record *part_ptr,
-				 slurmdb_association_rec_t *assoc_in,
+				 slurmdb_assoc_rec_t *assoc_in,
 				 slurmdb_qos_rec_t *qos_ptr,
-				 uint16_t *state_reason,
+				 uint32_t *state_reason,
 				 acct_policy_limit_set_t *acct_policy_limit_set,
 				 bool update_call);
 
@@ -109,8 +97,7 @@ extern bool acct_policy_job_runnable_pre_select(struct job_record *job_ptr);
  *	selected for the job verify the counts don't exceed aggregated limits.
  */
 extern bool acct_policy_job_runnable_post_select(
-	struct job_record *job_ptr, uint32_t cpu_cnt,
-	uint32_t node_cnt, uint32_t pn_min_memory);
+	struct job_record *job_ptr, uint64_t *tres_req_cnt);
 
 /*
  * Determine of the specified job can execute right now or is currently
@@ -121,7 +108,8 @@ extern bool acct_policy_job_runnable_state(struct job_record *job_ptr);
 /*
  * Using the limits on the job get the max nodes possible.
  */
-extern uint32_t acct_policy_get_max_nodes(struct job_record *job_ptr);
+extern uint32_t acct_policy_get_max_nodes(struct job_record *job_ptr,
+					  uint32_t *wait_reason);
 
 /*
  * acct_policy_update_pending_job - Make sure the limits imposed on a

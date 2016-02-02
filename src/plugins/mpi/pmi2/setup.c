@@ -4,6 +4,9 @@
  *  Copyright (C) 2011-2012 National University of Defense Technology.
  *  Written by Hongjia Cao <hjcao@nudt.edu.cn>.
  *  All rights reserved.
+ *  Portions copyright (C) 2015 Mellanox Technologies Inc.
+ *  Written by Artem Y. Polyakov <artemp@mellanox.com>.
+ *  All rights reserved.
  *
  *  This file is part of SLURM, a resource management program.
  *  For details, see <http://slurm.schedmd.com/>.
@@ -54,10 +57,10 @@
 #include <dlfcn.h>
 
 #include "src/common/slurm_xlator.h"
-#include "src/common/mpi.h"
-#include "src/common/xstring.h"
-#include "src/common/proc_args.h"
 #include "src/common/net.h"
+#include "src/common/proc_args.h"
+#include "src/common/slurm_mpi.h"
+#include "src/common/xstring.h"
 #include "src/slurmd/slurmstepd/slurmstepd_job.h"
 #include "src/slurmd/common/reverse_tree_math.h"
 
@@ -66,8 +69,9 @@
 #include "pmi.h"
 #include "spawn.h"
 #include "kvs.h"
+#include "ring.h"
 
-#define PMI2_SOCK_ADDR_FMT "/tmp/sock.pmi2.%u.%u"
+#define PMI2_SOCK_ADDR_FMT "%s/sock.pmi2.%u.%u"
 
 
 extern char **environ;
@@ -180,7 +184,7 @@ static int
 _setup_stepd_tree_info(const stepd_step_rec_t *job, char ***env)
 {
 	hostlist_t hl;
-	char srun_host[64];
+	char *srun_host;
 	uint16_t port;
 	char *p;
 	int tree_width;
@@ -229,23 +233,22 @@ _setup_stepd_tree_info(const stepd_step_rec_t *job, char ***env)
 
 	tree_info.pmi_port = 0;	/* not used */
 
-	p = getenvp(*env, "SLURM_SRUN_COMM_HOST");
-	if (!p) {
+	srun_host = getenvp(*env, "SLURM_SRUN_COMM_HOST");
+	if (!srun_host) {
 		error("mpi/pmi2: unable to find srun comm ifhn in env");
 		return SLURM_ERROR;
-	} else {
-		strncpy(srun_host, p, 64);
 	}
 	p = getenvp(*env, PMI2_SRUN_PORT_ENV);
 	if (!p) {
 		error("mpi/pmi2: unable to find srun pmi2 port in env");
 		return SLURM_ERROR;
-	} else {
-		port = atoi(p);
-		unsetenvp(*env, PMI2_SRUN_PORT_ENV);
 	}
+	port = atoi(p);
+
 	tree_info.srun_addr = xmalloc(sizeof(slurm_addr_t));
 	slurm_set_addr(tree_info.srun_addr, port, srun_host);
+
+	unsetenvp(*env, PMI2_SRUN_PORT_ENV);
 
 	/* init kvs seq to 0. TODO: reduce array size */
 	tree_info.children_kvs_seq = xmalloc(sizeof(uint32_t) *
@@ -262,6 +265,7 @@ _setup_stepd_sockets(const stepd_step_rec_t *job, char ***env)
 {
 	struct sockaddr_un sa;
 	int i;
+	char *spool;
 
 	debug("mpi/pmi2: setup sockets");
 
@@ -271,9 +275,12 @@ _setup_stepd_sockets(const stepd_step_rec_t *job, char ***env)
 		return SLURM_ERROR;
 	}
 	sa.sun_family = PF_UNIX;
+
+	spool = slurm_get_slurmd_spooldir();
 	snprintf(sa.sun_path, sizeof(sa.sun_path), PMI2_SOCK_ADDR_FMT,
-		 job->jobid, job->stepid);
+		 spool, job->jobid, job->stepid);
 	unlink(sa.sun_path);    /* remove possible old socket */
+	xfree(spool);
 
 	if (bind(tree_sock, (struct sockaddr *)&sa, SUN_LEN(&sa)) < 0) {
 		error("mpi/pmi2: failed to bind tree socket: %m");
@@ -288,7 +295,6 @@ _setup_stepd_sockets(const stepd_step_rec_t *job, char ***env)
 
 	/* remove the tree socket file on exit */
 	strncpy(tree_sock_addr, sa.sun_path, 128);
-	atexit(_remove_tree_sock);
 
 	task_socks = xmalloc(2 * job->node_tasks * sizeof(int));
 	for (i = 0; i < job->node_tasks; i ++) {
@@ -305,6 +311,7 @@ _setup_stepd_kvs(const stepd_step_rec_t *job, char ***env)
 	int rc = SLURM_SUCCESS, i = 0, pp_cnt = 0;
 	char *p, env_key[32], *ppkey, *ppval;
 
+	kvs_seq = 1;
 	rc = temp_kvs_init();
 	if (rc != SLURM_SUCCESS)
 		return rc;
@@ -369,33 +376,42 @@ pmi2_setup_stepd(const stepd_step_rec_t *job, char ***env)
 	if (rc != SLURM_SUCCESS)
 		return rc;
 
+	/* TODO: finalize pmix_ring state somewhere */
+	/* initialize pmix_ring state */
+	rc = pmix_ring_init(&job_info, env);
+	if (rc != SLURM_SUCCESS)
+		return rc;
+
 	return SLURM_SUCCESS;
 }
 
+extern void
+pmi2_cleanup_stepd()
+{
+	close(tree_sock);
+	_remove_tree_sock();
+}
 /**************************************************************/
 
 /* returned string should be xfree-ed by caller */
 static char *
 _get_proc_mapping(const mpi_plugin_client_info_t *job)
 {
-	uint32_t node_cnt, task_cnt, task_mapped, node_task_cnt, **tids,
-		block;
-	uint16_t task_dist, *tasks, *rounds;
+	uint32_t node_cnt, task_cnt, task_mapped, node_task_cnt, **tids;
+	uint32_t task_dist, block;
+	uint16_t *tasks, *rounds;
 	int i, start_id, end_id;
 	char *mapping = NULL;
 
 	node_cnt = job->step_layout->node_cnt;
 	task_cnt = job->step_layout->task_cnt;
-	task_dist = job->step_layout->task_dist;
+	task_dist = job->step_layout->task_dist & SLURM_DIST_STATE_BASE;
 	tasks = job->step_layout->tasks;
 	tids = job->step_layout->tids;
 
 	/* for now, PMI2 only supports vector processor mapping */
 
-	if (task_dist == SLURM_DIST_CYCLIC ||
-	    task_dist == SLURM_DIST_CYCLIC_CFULL ||
-	    task_dist == SLURM_DIST_CYCLIC_CYCLIC ||
-	    task_dist == SLURM_DIST_CYCLIC_BLOCK) {
+	if ((task_dist & SLURM_DIST_NODEMASK) == SLURM_DIST_NODECYCLIC) {
 		mapping = xstrdup("(vector");
 
 		rounds = xmalloc (node_cnt * sizeof(uint16_t));
@@ -457,7 +473,8 @@ _get_proc_mapping(const mpi_plugin_client_info_t *job)
 				}
 				if (start_id >= node_cnt)
 					break;
-				/* find start block. block may be less than plane size */
+				/* find start block. block may be less
+				 * than plane size */
 				block = 0;
 				while (rounds[start_id] < tasks[start_id] &&
 				       (task_mapped ==
@@ -471,9 +488,12 @@ _get_proc_mapping(const mpi_plugin_client_info_t *job)
 				while (end_id < node_cnt &&
 				       (rounds[end_id] + block - 1 <
 					tasks[end_id])) {
-					for (i = 0; i < tasks[end_id] - rounds[end_id]; i ++) {
+					for (i = 0;
+					     i < tasks[end_id] - rounds[end_id];
+					     i ++) {
 						if (task_mapped + i !=
-						    tids[end_id][rounds[end_id] + i]) {
+						    tids[end_id][rounds[end_id]
+								 + i]) {
 							break;
 						}
 					}
@@ -498,12 +518,12 @@ _get_proc_mapping(const mpi_plugin_client_info_t *job)
 		for (i = start_id + 1; i < node_cnt; i ++) {
 			if (node_task_cnt == tasks[i])
 				continue;
-			xstrfmtcat(mapping, ",(%u,%u,%hu)", start_id,
+			xstrfmtcat(mapping, ",(%u,%u,%u)", start_id,
 				   i - start_id, node_task_cnt);
 			start_id = i;
 			node_task_cnt = tasks[i];
 		}
-		xstrfmtcat(mapping, ",(%u,%u,%hu))", start_id, i - start_id,
+		xstrfmtcat(mapping, ",(%u,%u,%u))", start_id, i - start_id,
 			   node_task_cnt);
 	}
 
@@ -592,6 +612,7 @@ _setup_srun_tree_info(const mpi_plugin_client_info_t *job)
 {
 	char *p;
 	uint16_t p_port;
+	char *spool;
 
 	memset(&tree_info, 0, sizeof(tree_info));
 
@@ -611,8 +632,10 @@ _setup_srun_tree_info(const mpi_plugin_client_info_t *job)
 	} else
 		tree_info.srun_addr = NULL;
 
+	spool = slurm_get_slurmd_spooldir();
 	snprintf(tree_sock_addr, 128, PMI2_SOCK_ADDR_FMT,
-		 job->jobid, job->stepid);
+		 spool, job->jobid, job->stepid);
+	xfree(spool);
 
 	/* init kvs seq to 0. TODO: reduce array size */
 	tree_info.children_kvs_seq = xmalloc(sizeof(uint32_t) *
@@ -625,7 +648,7 @@ static int
 _setup_srun_socket(const mpi_plugin_client_info_t *job)
 {
 	if (net_stream_listen(&tree_sock,
-			      (short int *)&tree_info.pmi_port) < 0) {
+			      &tree_info.pmi_port) < 0) {
 		error("mpi/pmi2: Failed to create tree socket");
 		return SLURM_ERROR;
 	}
@@ -639,6 +662,7 @@ _setup_srun_kvs(const mpi_plugin_client_info_t *job)
 {
 	int rc;
 
+	kvs_seq = 1;
 	rc = temp_kvs_init();
 	return rc;
 }

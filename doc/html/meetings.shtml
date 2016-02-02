@@ -2,16 +2,27 @@
 
 <h1>Meetings</h1>
 
-<p><b>Slurm User Group Meeting 2014</b><br>
-23-24 September 2014<br>
-Lugano, Switzerland<br>
-Host: <a href="http://cscs.ch/">Swiss National Supercomputing Centre</a></p>
-<a href="slurm_ug_cfp.html">Call for Abstracts: Due 6 June 2014</a><br>
-<!--<a href="slurm_ug_agenda.html">Meeting agenda</a><br>-->
-<!--<a href="slurm_ug_registration.html">Registration information</a>--></p>
+<p><b>Slurm User Group Meeting 2016</b><br>
+26-27 September 2016<br>
+Athens, Greece<br>
+Host: <a href="http://www.grnet.gr/">Greek Research and Technology Network (GRNET)</a></p>
+<p>More information coming soon.</p>
+<!-- <a href="slurm_ug_cfp.html">Call for Abstracts: Due 1 June 2015</a><br> -->
+<!-- <a href="slurm_ug_agenda.html">Meeting agenda, registration information, etc.</a><br> -->
+<!-- <a href="slurm_ug_agenda.html#hotels">Meeting hotels</a><br> -->
 
 <br>
 <h2>Previous Meetings</h2>
+
+<p><b>Slurm User Group Meeting 2015</b><br>
+15-16 September 2015<br>
+Washington DC, USA<br>
+Host: The George Washington University</p>
+
+<p><b>Slurm User Group Meeting 2014</b><br>
+23-24 September 2014<br>
+Lugano, Switzerland<br>
+Host: Swiss National Supercomputing Centre</p>
 
 <p><b>Slurm User Group Meeting 2013</b><br>
 18-19 September 2013<br>
@@ -33,6 +44,6 @@ Host: Bull</p>
 Paris, France<br>
 Host: CEA</p>
 
-<p style="text-align:center;">Last modified 31 March 2014</p>
+<p style="text-align:center;">Last modified 31 December 2015</p>
 
 <!--#include virtual="footer.txt"-->

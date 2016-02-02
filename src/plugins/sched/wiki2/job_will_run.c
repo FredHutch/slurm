@@ -135,6 +135,7 @@ static char *	_will_run_test(uint32_t jobid, time_t start_time,
 	int rc;
 	time_t start_res, orig_start_time;
 	List preemptee_candidates;
+	bool resv_overlap = false;
 
 	debug2("wiki2: will_run job_id=%u start_time=%u node_list=%s",
 		jobid, (uint32_t)start_time, node_list);
@@ -175,7 +176,7 @@ static char *	_will_run_test(uint32_t jobid, time_t start_time,
 	/* Enforce reservation: access control, time and nodes */
 	start_res = start_time;
 	rc = job_test_resv(job_ptr, &start_res, true, &resv_bitmap,
-			   &exc_core_bitmap);
+			   &exc_core_bitmap, &resv_overlap);
 	if (rc != SLURM_SUCCESS) {
 		*err_code = -730;
 		*err_msg = "Job denied access to reservation";
@@ -184,7 +185,6 @@ static char *	_will_run_test(uint32_t jobid, time_t start_time,
 		FREE_NULL_BITMAP(exc_core_bitmap);
 		return NULL;
 	}
-	start_time = MAX(start_time, start_res);
 	bit_and(avail_bitmap, resv_bitmap);
 	FREE_NULL_BITMAP(resv_bitmap);
 
@@ -204,7 +204,7 @@ static char *	_will_run_test(uint32_t jobid, time_t start_time,
 		return NULL;
 	}
 
-	if (job_req_node_filter(job_ptr, avail_bitmap) != SLURM_SUCCESS) {
+	if (job_req_node_filter(job_ptr, avail_bitmap, true) != SLURM_SUCCESS) {
 		/* Job probably has invalid feature list */
 		*err_code = -730;
 		*err_msg = "Job's required features not available "
@@ -261,8 +261,7 @@ static char *	_will_run_test(uint32_t jobid, time_t start_time,
 			       min_nodes, max_nodes, req_nodes,
 			       SELECT_MODE_WILL_RUN,
 			       preemptee_candidates, NULL, exc_core_bitmap);
-	if (preemptee_candidates)
-		list_destroy(preemptee_candidates);
+	FREE_NULL_LIST(preemptee_candidates);
 
 	if (rc == SLURM_SUCCESS) {
 		char tmp_str[128];
@@ -427,6 +426,7 @@ static char *	_will_run_test2(uint32_t jobid, time_t start_time,
 	time_t orig_start_time;
 	char *reply_msg = NULL;
 	int i, rc;
+	bool resv_overlap = false;
 
 	xassert(node_list);
 	debug2("wiki2: will_run2 job_id=%u start_time=%u node_list=%s",
@@ -465,7 +465,7 @@ static char *	_will_run_test2(uint32_t jobid, time_t start_time,
 	/* Enforce reservation: access control, time and nodes */
 	start_res = start_time;
 	rc = job_test_resv(job_ptr, &start_res, true, &resv_bitmap,
-			   &exc_core_bitmap);
+			   &exc_core_bitmap, &resv_overlap);
 	if (rc != SLURM_SUCCESS) {
 		*err_code = -730;
 		*err_msg = "Job denied access to reservation";
@@ -474,7 +474,6 @@ static char *	_will_run_test2(uint32_t jobid, time_t start_time,
 		FREE_NULL_BITMAP(exc_core_bitmap);
 		return NULL;
 	}
-	start_time = MAX(start_time, start_res);
 	bit_and(avail_bitmap, resv_bitmap);
 	FREE_NULL_BITMAP(resv_bitmap);
 
@@ -494,7 +493,7 @@ static char *	_will_run_test2(uint32_t jobid, time_t start_time,
 		return NULL;
 	}
 
-	if (job_req_node_filter(job_ptr, avail_bitmap) != SLURM_SUCCESS) {
+	if (job_req_node_filter(job_ptr, avail_bitmap, true) != SLURM_SUCCESS) {
 		/* Job probably has invalid feature list */
 		*err_code = -730;
 		*err_msg = "Job's required features not available "
@@ -557,8 +556,7 @@ static char *	_will_run_test2(uint32_t jobid, time_t start_time,
 			       req_nodes, SELECT_MODE_WILL_RUN,
 			       preemptee_candidates, &preempted_jobs,
 			       exc_core_bitmap);
-	if (preemptee_candidates)
-		list_destroy(preemptee_candidates);
+	FREE_NULL_LIST(preemptee_candidates);
 
 	if (rc == SLURM_SUCCESS) {
 		char *hostlist, *sep, tmp_str[128];
@@ -589,7 +587,7 @@ static char *	_will_run_test2(uint32_t jobid, time_t start_time,
 					 sep, pre_ptr->job_id);
 				xstrcat(reply_msg, tmp_str);
 			}
-			list_destroy(preempted_jobs);
+			FREE_NULL_LIST(preempted_jobs);
 		}
 	} else {
 		xstrcat(reply_msg, "Jobs not runable on selected nodes");

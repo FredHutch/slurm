@@ -72,6 +72,7 @@ typedef struct {
 	slurm_addr_t ioaddr;       /* Address to connect on for normal I/O.
 				      Spawn IO uses messages to the normal
 				      resp_addr. */
+	uint16_t protocol_version; /* protocol_version of the srun */
 } srun_info_t;
 
 typedef enum {
@@ -152,7 +153,10 @@ typedef struct {
 	char          *cpu_bind;       /* binding map for map/mask_cpu      */
 	mem_bind_type_t mem_bind_type; /* --mem_bind=                       */
 	char          *mem_bind;       /* binding map for tasks to memory   */
-	uint32_t       cpu_freq;       /* requested cpu frequency           */
+	uint16_t accel_bind_type;  /* --accel_bind= */
+	uint32_t cpu_freq_min; /* Minimum cpu frequency  */
+	uint32_t cpu_freq_max; /* Maximum cpu frequency  */
+	uint32_t cpu_freq_gov; /* cpu frequency governor */
 	switch_jobinfo_t *switch_job; /* switch-specific job information     */
 	uid_t         uid;     /* user id for job                           */
 	char          *user_name;
@@ -232,16 +236,20 @@ typedef struct {
 					  * POINTER. */
 	mpmd_set_t     *mpmd_set;	/* MPMD specifications for Cray */
 	uint16_t	job_core_spec;	/* count of specialized cores */
+	int		non_smp;	/* Set if task IDs are not monotonically
+					 * increasing across all nodes, set only
+					 * native Cray systems */
 } stepd_step_rec_t;
 
 
-stepd_step_rec_t * stepd_step_rec_create(launch_tasks_request_msg_t *msg);
+stepd_step_rec_t * stepd_step_rec_create(launch_tasks_request_msg_t *msg,
+					 uint16_t protocol_version);
 stepd_step_rec_t * batch_stepd_step_rec_create(batch_job_launch_msg_t *msg);
 
 void stepd_step_rec_destroy(stepd_step_rec_t *job);
 
 srun_info_t * srun_info_create(slurm_cred_t *cred, slurm_addr_t *respaddr,
-				    slurm_addr_t *ioaddr);
+			       slurm_addr_t *ioaddr, uint16_t protocol_version);
 
 void  srun_info_destroy(srun_info_t *srun);
 
@@ -258,6 +266,10 @@ static inline stepd_step_task_info_t *
 job_task_info_by_pid (stepd_step_rec_t *job, pid_t pid)
 {
 	uint32_t i;
+
+	if (!job)
+		return NULL;
+
 	for (i = 0; i < job->node_tasks; i++) {
 		if (job->task[i]->pid == pid)
 			return (job->task[i]);

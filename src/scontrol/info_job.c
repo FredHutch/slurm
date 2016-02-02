@@ -36,11 +36,14 @@
  *  with SLURM; if not, write to the Free Software Foundation, Inc.,
  *  51 Franklin Street, Fifth Floor, Boston, MA 02110-1301  USA.
 \*****************************************************************************/
-#include <sys/types.h>
-#include <sys/stat.h>
+#include <arpa/inet.h>
 #include <fcntl.h>
+#include <sys/stat.h>
+#include <sys/types.h>
 
 #include "scontrol.h"
+#include "src/common/bitstring.h"
+#include "src/common/slurm_time.h"
 #include "src/common/stepd_api.h"
 #include "src/plugins/select/bluegene/bg_enums.h"
 
@@ -154,7 +157,7 @@ scontrol_pid_info(pid_t job_pid)
 			slurm_perror ("slurm_get_end_time error");
 		return;
 	}
-	printf("Slurm job id %u ends at %s\n", job_id, slurm_ctime(&end_time));
+	printf("Slurm job id %u ends at %s\n", job_id, slurm_ctime2(&end_time));
 
 	rem_time = slurm_get_rem_time(job_id);
 	printf("slurm_get_rem_time is %ld\n", rem_time);
@@ -275,6 +278,26 @@ scontrol_get_job_state(uint32_t job_id)
 	return (uint16_t) NO_VAL;
 }
 
+static bool _task_id_in_job(job_info_t *job_ptr, uint32_t array_id)
+{
+	bitstr_t *array_bitmap;
+	uint32_t array_len;
+
+	if ((array_id == NO_VAL) ||
+	    (array_id == job_ptr->array_task_id))
+		return true;
+
+	array_bitmap = (bitstr_t *) job_ptr->array_bitmap;
+	if (array_bitmap == NULL)
+		return false;
+	array_len = bit_size(array_bitmap);
+	if (array_id >= array_len)
+		return false;
+	if (bit_test(array_bitmap, array_id))
+		return true;
+	return false;
+}
+
 /*
  * scontrol_print_job - print the specified job's information
  * IN job_id - job's id or NULL to print information about all jobs
@@ -312,10 +335,21 @@ scontrol_print_job (char * job_id_str)
 
 	for (i = 0, job_ptr = job_buffer_ptr->job_array;
 	     i < job_buffer_ptr->record_count; i++, job_ptr++) {
-		if ((array_id != NO_VAL) &&
-		    (array_id != job_ptr->array_task_id))
+		char *save_array_str = NULL;
+		uint32_t save_task_id = 0;
+		if (!_task_id_in_job(job_ptr, array_id))
 			continue;
+		if ((array_id != NO_VAL) && job_ptr->array_task_str) {
+			save_array_str = job_ptr->array_task_str;
+			job_ptr->array_task_str = NULL;
+			save_task_id = job_ptr->array_task_id;
+			job_ptr->array_task_id = array_id;
+		}
 		slurm_print_job_info(stdout, job_ptr, one_liner);
+		if (save_array_str) {
+			job_ptr->array_task_str = save_array_str;
+			job_ptr->array_task_id = save_task_id;
+		}
 		print_cnt++;
 	}
 
@@ -426,7 +460,7 @@ scontrol_print_step (char *job_step_id_str)
 		if (job_step_id_str) {
 			exit_code = 1;
 			if (quiet_flag != 1) {
-				if (array_id == (uint16_t) NO_VAL) {
+				if (array_id == NO_VAL) {
 					printf ("Job step %u.%u not found\n",
 						job_id, step_id);
 				} else {
@@ -516,8 +550,9 @@ _list_pids_one_step(const char *node_name, uint32_t jobid, uint32_t stepid)
 	uint32_t count = 0;
 	uint32_t tcount = 0;
 	int i;
+	uint16_t protocol_version;
 
-	fd = stepd_connect(NULL, node_name, jobid, stepid);
+	fd = stepd_connect(NULL, node_name, jobid, stepid, &protocol_version);
 	if (fd == -1) {
 		exit_code = 1;
 		if (errno == ENOENT) {
@@ -531,7 +566,7 @@ _list_pids_one_step(const char *node_name, uint32_t jobid, uint32_t stepid)
 		return;
 	}
 
-	stepd_task_info(fd, &task_info, &tcount);
+	stepd_task_info(fd, protocol_version, &task_info, &tcount);
 	for (i = 0; i < (int)tcount; i++) {
 		if (!task_info[i].exited) {
 			if (stepid == NO_VAL)
@@ -551,7 +586,7 @@ _list_pids_one_step(const char *node_name, uint32_t jobid, uint32_t stepid)
 		}
 	}
 
-	stepd_list_pids(fd, &pids, &count);
+	stepd_list_pids(fd, protocol_version, &pids, &count);
 	for (i = 0; i < count; i++) {
 		if (!_in_task_array((pid_t)pids[i], task_info, tcount)) {
 			if (stepid == NO_VAL)
@@ -562,7 +597,6 @@ _list_pids_one_step(const char *node_name, uint32_t jobid, uint32_t stepid)
 				       pids[i], jobid, stepid, "-", "-");
 		}
 	}
-
 
 	if (count > 0)
 		xfree(pids);
@@ -582,8 +616,7 @@ _list_pids_all_steps(const char *node_name, uint32_t jobid)
 	steps = stepd_available(NULL, node_name);
 	if (!steps || list_count(steps) == 0) {
 		fprintf(stderr, "Job %u does not exist on this node.\n", jobid);
-		if (steps)
-			list_destroy(steps);
+		FREE_NULL_LIST(steps);
 		exit_code = 1;
 		return;
 	}
@@ -597,7 +630,7 @@ _list_pids_all_steps(const char *node_name, uint32_t jobid)
 		}
 	}
 	list_iterator_destroy(itr);
-	list_destroy(steps);
+	FREE_NULL_LIST(steps);
 
 	if (count == 0) {
 		fprintf(stderr, "Job %u does not exist on this node.\n",
@@ -616,8 +649,7 @@ _list_pids_all_jobs(const char *node_name)
 	steps = stepd_available(NULL, node_name);
 	if (!steps || list_count(steps) == 0) {
 		fprintf(stderr, "No job steps exist on this node.\n");
-		if (steps)
-			list_destroy(steps);
+		FREE_NULL_LIST(steps);
 		exit_code = 1;
 		return;
 	}
@@ -628,7 +660,7 @@ _list_pids_all_jobs(const char *node_name)
 				    stepd->stepid);
 	}
 	list_iterator_destroy(itr);
-	list_destroy(steps);
+	FREE_NULL_LIST(steps);
 }
 
 /*
@@ -681,12 +713,12 @@ scontrol_print_hosts (char * node_list)
 		error("host list is empty");
 		return;
 	}
-	hl = hostlist_create(node_list);
+	hl = hostlist_create_dims(node_list, 0);
 	if (!hl) {
 		fprintf(stderr, "Invalid hostlist: %s\n", node_list);
 		return;
 	}
-	while ((host = hostlist_shift(hl))) {
+	while ((host = hostlist_shift_dims(hl, 0))) {
 		printf("%s\n", host);
 		free(host);
 	}
@@ -933,4 +965,70 @@ extern int scontrol_job_ready(char *job_id_str)
 		rc = _wait_nodes_ready(job_id);
 
 	return rc;
+}
+
+extern int scontrol_callerid(int argc, char **argv)
+{
+	int af, ver = 4;
+	unsigned char ip_src[sizeof(struct in6_addr)],
+		      ip_dst[sizeof(struct in6_addr)];
+	uint32_t port_src, port_dst, job_id;
+	network_callerid_msg_t req;
+	char node_name[MAXHOSTNAMELEN], *ptr;
+
+	if (argc == 5) {
+		ver = strtoul(argv[4], &ptr, 0);
+		if (ptr && ptr[0]) {
+			error("Address family not an integer");
+			return SLURM_ERROR;
+		}
+	}
+
+	if (ver != 4 && ver != 6) {
+		error("Invalid address family: %d", ver);
+		return SLURM_ERROR;
+	}
+
+	af = ver == 4 ? AF_INET : AF_INET6;
+	if (!inet_pton(af, argv[0], ip_src)) {
+		error("inet_pton failed for '%s'", argv[0]);
+		return SLURM_ERROR;
+	}
+
+	port_src = strtoul(argv[1], &ptr, 0);
+	if (ptr && ptr[0]) {
+		error("Source port not an integer");
+		return SLURM_ERROR;
+	}
+
+	if (!inet_pton(af, argv[2], ip_dst)) {
+		error("scontrol_callerid: inet_pton failed for '%s'", argv[2]);
+		return SLURM_ERROR;
+	}
+
+	port_dst = strtoul(argv[3], &ptr, 0);
+	if (ptr && ptr[0]) {
+		error("Destination port not an integer");
+		return SLURM_ERROR;
+	}
+
+	memcpy(req.ip_src, ip_src, 16);
+	memcpy(req.ip_dst, ip_dst, 16);
+	req.port_src = port_src;
+	req.port_dst = port_dst;
+	req.af = af;
+
+	if (slurm_network_callerid(req, &job_id, node_name, MAXHOSTNAMELEN)
+			!= SLURM_SUCCESS) {
+		fprintf(stderr,
+			"slurm_network_callerid: unable to retrieve callerid data from remote slurmd\n");
+		return SLURM_FAILURE;
+	} else if (job_id == (uint32_t)NO_VAL) {
+		fprintf(stderr,
+			"slurm_network_callerid: remote job id indeterminate\n");
+		return SLURM_FAILURE;
+	} else {
+		printf("%u %s\n", job_id, node_name);
+		return SLURM_SUCCESS;
+	}
 }

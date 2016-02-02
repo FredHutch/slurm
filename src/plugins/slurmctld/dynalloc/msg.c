@@ -1,5 +1,5 @@
 /*****************************************************************************\
- *  msg.c - Message/communcation manager for dynalloc (resource dynamic
+ *  msg.c - Message/communication manager for dynalloc (resource dynamic
  *  allocation) plugin
  *****************************************************************************
  *  Copyright (C) 2012-2013 Los Alamos National Security, LLC.
@@ -101,10 +101,10 @@ extern int spawn_msg_thread(void)
 		return SLURM_ERROR;
 	}
 
-	pthread_mutex_lock( &thread_flag_mutex );
+	slurm_mutex_lock( &thread_flag_mutex );
 	if (thread_running) {
 		error("dynalloc thread already running, not starting another");
-		pthread_mutex_unlock(&thread_flag_mutex);
+		slurm_mutex_unlock(&thread_flag_mutex);
 		return SLURM_ERROR;
 	}
 
@@ -118,7 +118,7 @@ extern int spawn_msg_thread(void)
 
 	slurm_attr_destroy(&thread_attr_msg);
 	thread_running = true;
-	pthread_mutex_unlock(&thread_flag_mutex);
+	slurm_mutex_unlock(&thread_flag_mutex);
 	return SLURM_SUCCESS;
 }
 
@@ -127,7 +127,7 @@ extern int spawn_msg_thread(void)
 \*****************************************************************************/
 extern void term_msg_thread(void)
 {
-	pthread_mutex_lock(&thread_flag_mutex);
+	slurm_mutex_lock(&thread_flag_mutex);
 	if (thread_running) {
 		int fd;
 		slurm_addr_t addr;
@@ -140,7 +140,7 @@ extern void term_msg_thread(void)
 		 * flag.
 		 */
 		slurm_set_addr(&addr, sched_port, "localhost");
-		fd = slurm_open_stream(&addr);
+		fd = slurm_open_stream(&addr, true);
 		if (fd != -1) {
 			/* we don't care if the open failed */
 			slurm_close_stream(fd);
@@ -153,7 +153,7 @@ extern void term_msg_thread(void)
 		thread_running = false;
 		debug2("join of dynalloc thread successful");
 	}
-	pthread_mutex_unlock(&thread_flag_mutex);
+	slurm_mutex_unlock(&thread_flag_mutex);
 }
 
 /*****************************************************************************\
