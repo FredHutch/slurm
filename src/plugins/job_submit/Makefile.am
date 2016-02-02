@@ -10,4 +10,6 @@ SUBDIRS = \
 	partition \
 	pbs \
 	require_timelimit \
-	throttle
+	throttle \
+	default_account \
+	default_qos
