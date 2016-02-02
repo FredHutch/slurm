@@ -588,6 +588,8 @@ AC_CONFIG_FILES([Makefile
 		 src/plugins/job_submit/pbs/Makefile
 		 src/plugins/job_submit/require_timelimit/Makefile
 		 src/plugins/job_submit/throttle/Makefile
+		 src/plugins/job_submit/default_qos/Makefile
+		 src/plugins/job_submit/default_account/Makefile
 		 src/plugins/launch/Makefile
 		 src/plugins/launch/aprun/Makefile
 		 src/plugins/launch/poe/Makefile
