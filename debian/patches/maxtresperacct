@@ -365,6 +365,37 @@ index 7f39dbb..fb59313 100644
  #define SLURM_MIN_PROTOCOL_VERSION SLURM_14_03_PROTOCOL_VERSION
  
  #if 0
+diff --git a/src/common/slurm_protocol_defs.c b/src/common/slurm_protocol_defs.c
+index a5684cc..4f3eeab 100644
+--- a/src/common/slurm_protocol_defs.c
++++ b/src/common/slurm_protocol_defs.c
+@@ -1529,6 +1529,26 @@ extern char *job_reason_string(enum job_state_reason inx)
+ 		return "AssocMaxBBMinutesPerJob";
+ 	case WAIT_QOS_MIN_BB:
+ 		return "QOSMinBB";
++	case WAIT_QOS_MAX_BB_PER_ACCT:
++		return "MaxBBPerAccount";
++	case WAIT_QOS_MAX_CPU_PER_ACCT:
++		return "MaxCpuPerAccount";
++	case WAIT_QOS_MAX_ENERGY_PER_ACCT:
++		return "MaxEnergyPerAccount";
++	case WAIT_QOS_MAX_GRES_PER_ACCT:
++		return "MaxGRESPerAccount";
++	case WAIT_QOS_MAX_NODE_PER_ACCT:
++		return "MaxNodePerAccount";
++	case WAIT_QOS_MAX_LIC_PER_ACCT:
++		return "MaxLicensePerAccount";
++	case WAIT_QOS_MAX_MEM_PER_ACCT:
++		return "MaxMemoryPerAccount";
++	case WAIT_QOS_MAX_UNK_PER_ACCT:
++		return "MaxUnknownPerAccount";
++	case WAIT_QOS_MAX_JOB_PER_ACCT:
++		return "MaxJobsPerAccount";
++	case WAIT_QOS_MAX_SUB_JOB_PER_ACCT:
++		return "MaxSubmitJobsPerAccount";
+ 	default:
+ 		snprintf(val, sizeof(val), "%d", inx);
+ 		return val;
 diff --git a/src/common/slurmdb_defs.c b/src/common/slurmdb_defs.c
 index cfe01f7..3ec54de 100644
 --- a/src/common/slurmdb_defs.c
@@ -1314,14 +1345,16 @@ index 28867ff..25b4f2e 100644
  			qos->max_tres_run_mins_pu = xstrdup(row[QOS_REQ_MTRM]);
  
 diff --git a/src/sacctmgr/common.c b/src/sacctmgr/common.c
-index dbce30b..33a23c3 100644
+index dbce30b..40219bd 100644
 --- a/src/sacctmgr/common.c
 +++ b/src/sacctmgr/common.c
-@@ -426,6 +426,14 @@ static print_field_t *_get_print_field(char *object)
+@@ -426,6 +426,16 @@ static print_field_t *_get_print_field(char *object)
  		field->name = xstrdup("MaxTRESMins");
  		field->len = 13;
  		field->print_routine = sacctmgr_print_tres;
 +	} else if (!strncasecmp("MaxTRESRunMinsPerAccount", object,
++				MAX(command_len, 18)) ||
++		   !strncasecmp("MaxTRESRunMinsPerAcct", object,
 +				MAX(command_len, 18)) ||
 +		   !strncasecmp("MaxTRESRunMinsPA", object,
 +				MAX(command_len, 15))) {
@@ -1332,11 +1365,13 @@ index dbce30b..33a23c3 100644
  	} else if (!strncasecmp("MaxTRESRunMinsPerUser", object,
  				MAX(command_len, 8)) ||
  		   !strncasecmp("MaxTRESRunMinsPU", object,
-@@ -434,6 +442,14 @@ static print_field_t *_get_print_field(char *object)
+@@ -434,6 +444,16 @@ static print_field_t *_get_print_field(char *object)
  		field->name = xstrdup("MaxTRESRunMinsPU");
  		field->len = 15;
  		field->print_routine = sacctmgr_print_tres;
 +	} else if (!strncasecmp("MaxTRESPerAccount", object,
++				MAX(command_len, 11)) ||
++		   !strncasecmp("MaxTRESPerAcct", object,
 +				MAX(command_len, 11)) ||
 +		   !strncasecmp("MaxTRESPA", object,
 +				MAX(command_len, 9))) {
@@ -1347,11 +1382,13 @@ index dbce30b..33a23c3 100644
  	} else if (!strncasecmp("MaxTRESPerUser", object,
  				MAX(command_len, 11))) {
  		field->type = PRINT_MAXTU;
-@@ -445,6 +461,14 @@ static print_field_t *_get_print_field(char *object)
+@@ -445,6 +465,16 @@ static print_field_t *_get_print_field(char *object)
  		field->name = xstrdup("MaxJobs");
  		field->len = 7;
  		field->print_routine = print_fields_uint;
 +	} else if (!strncasecmp("MaxJobsPerAccount", object,
++				MAX(command_len, 11)) ||
++		   !strncasecmp("MaxJobsPerAcct", object,
 +				MAX(command_len, 11)) ||
 +		   !strncasecmp("MaxJobsPA", object,
 +				MAX(command_len, 9))) {
@@ -1362,11 +1399,13 @@ index dbce30b..33a23c3 100644
  	} else if (!strncasecmp("MaxJobsPerUser", object,
  				MAX(command_len, 8)) ||
  		   !strncasecmp("MaxJobsPU", object,
-@@ -472,6 +496,14 @@ static print_field_t *_get_print_field(char *object)
+@@ -472,6 +502,16 @@ static print_field_t *_get_print_field(char *object)
  		field->name = xstrdup("MaxSubmit");
  		field->len = 9;
  		field->print_routine = print_fields_uint;
 +	} else if (!strncasecmp("MaxSubmitJobsPerAccount", object,
++				MAX(command_len, 17)) ||
++		   !strncasecmp("MaxSubmitJobsPerAcct", object,
 +				MAX(command_len, 17)) ||
 +		   !strncasecmp("MaxSubmitJobsPA", object,
 +				MAX(command_len, 15))) {
@@ -1377,7 +1416,7 @@ index dbce30b..33a23c3 100644
  	} else if (!strncasecmp("MaxSubmitJobsPerUser", object,
  				MAX(command_len, 10)) ||
  		   !strncasecmp("MaxSubmitJobsPU", object,
-@@ -1748,132 +1780,157 @@ extern void sacctmgr_print_qos_limits(slurmdb_qos_rec_t *qos)
+@@ -1748,132 +1788,157 @@ extern void sacctmgr_print_qos_limits(slurmdb_qos_rec_t *qos)
  
  	if (qos->flags && (qos->flags != QOS_FLAG_NOTSET)) {
  		char *tmp_char = slurmdb_qos_flags_str(qos->flags);
@@ -1561,7 +1600,7 @@ index dbce30b..33a23c3 100644
  }
  
 diff --git a/src/sacctmgr/qos_functions.c b/src/sacctmgr/qos_functions.c
-index 48da080..b718ce0 100644
+index 48da080..dfb5763 100644
 --- a/src/sacctmgr/qos_functions.c
 +++ b/src/sacctmgr/qos_functions.c
 @@ -456,12 +456,19 @@ static int _set_rec(int *start, int argc, char *argv[],
@@ -1642,7 +1681,19 @@ index 48da080..b718ce0 100644
  					MAX(command_len, 8))) {
  			sacctmgr_initialize_g_tres_list();
  
-@@ -1056,11 +1096,21 @@ extern int sacctmgr_list_qos(int argc, char *argv[])
+@@ -889,7 +929,10 @@ extern int sacctmgr_list_qos(int argc, char *argv[])
+ 				      "MaxTRES,MaxTRESPerN,MaxTRESMins,MaxW,"
+ 				      "MaxTRESPerUser,"
+ 				      "MaxJobsPerUser,"
+-				      "MaxSubmitJobsPerUser,MinTRES");
++				      "MaxSubmitJobsPerUser,"
++				      "MaxTRESPerAcct,"
++				      "MaxJobsPerAcct,"
++				      "MaxSubmitJobsPerAcct,MinTRES");
+ 	}
+ 
+ 	print_fields_list = sacctmgr_process_format_list(format_list);
+@@ -1056,11 +1099,21 @@ extern int sacctmgr_list_qos(int argc, char *argv[])
  					field, qos->max_tres_run_mins_pu,
  					(curr_inx == field_count));
  				break;
@@ -1664,7 +1715,7 @@ index 48da080..b718ce0 100644
  			case PRINT_MAXTN:
  				field->print_routine(
  					field, qos->max_tres_pn,
-@@ -1076,6 +1126,11 @@ extern int sacctmgr_list_qos(int argc, char *argv[])
+@@ -1076,6 +1129,11 @@ extern int sacctmgr_list_qos(int argc, char *argv[])
  						     qos->max_jobs_pu,
  						     (curr_inx == field_count));
  				break;
@@ -1676,7 +1727,7 @@ index 48da080..b718ce0 100644
  			case PRINT_MAXN:
  				field->print_routine(
  					field,
-@@ -1095,6 +1150,11 @@ extern int sacctmgr_list_qos(int argc, char *argv[])
+@@ -1095,6 +1153,11 @@ extern int sacctmgr_list_qos(int argc, char *argv[])
  						     qos->max_submit_jobs_pu,
  						     (curr_inx == field_count));
  				break;

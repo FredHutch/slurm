@@ -1,3 +1,9 @@
+slurm-llnl (15.08.7-4) unstable; urgency=medium
+
+  * Fixed regression caused by incorrect patch installation
+
+ -- Michael Gutteridge <mrg@fredhutch.org>  Tue, 09 Feb 2016 14:43:51 -0800
+
 slurm-llnl (15.08.7-3) unstable; urgency=medium
 
   * Final maxtresperaccount patch
